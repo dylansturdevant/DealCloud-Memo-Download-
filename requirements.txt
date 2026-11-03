@@ -1,0 +1,6 @@
+# Streamlit fragment polling requires a recent Streamlit release.
+# Versions are ranges/unpinned, not a live-tested reproducible lockfile.
+streamlit>=1.41,<2
+dealcloud-sdk
+pandas>=2
+tzdata

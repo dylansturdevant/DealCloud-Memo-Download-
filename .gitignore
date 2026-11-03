@@ -1,0 +1,8 @@
+dealcloud-memo-venv/
+runs/
+DealCloud_Memo_Downloads/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+*credentials*.json
+!credentials.template.json
