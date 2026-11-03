@@ -3,7 +3,8 @@
 ## Completed checks
 
 - Six Python source files passed Python syntax/AST checks.
-- **21 offline unittest cases passed**, with zero failures and zero errors.
+- **26 offline unittest cases passed**, with zero failures and zero errors.
+- Additional output-layout tests cover flat single-population memo placement, removal of nested output/timestamp layers, readable filesystem-safe batch names, collision-safe naming, and the batch itself as the output directory.
 - Test runtime: Python 3.14.8, pandas 3.0.6. This is the analysis runtime, not a recommendation to use that Python version on Windows.
 - DealCloud SDK access was replaced with a fake in the offline tests; no actual credentials, authentication, tenant reads, or real memo downloads were used.
 

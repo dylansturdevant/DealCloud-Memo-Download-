@@ -82,40 +82,44 @@ The interface starts with the supplied script's 2026-01-01 start date, today as 
 
 Downloading re-reads the API. Tenant data or permissions may change after preview. Metadata and filename checks happen during downloading and can remove candidates that were counted in preview. Zero successful files can result from failures or skips, not necessarily zero eligible records. A run marked completed means the processing finished without a population-level error, not that every candidate downloaded successfully.
 
-## 4. Outputs
+## 4. Outputs — simplified in this version
 
-Each preview or download has its own local folder:
+Download batches now use a short, readable name based on population, selected memo stages and timestamp in the site timezone. Full filters remain in `Reports/run_settings.json` rather than making the pathname enormous.
+
+For a single population:
 
 ```text
-DealCloud_Memo_Streamlit\
-├── app.py
-├── launch.bat
-├── setup.bat
-├── requirements.txt
-├── credentials.template.json
-├── dealcloud-memo-venv\
-└── runs\
-    └── <timestamp>_<random id>\
+Downloads/
+└── Primaries - Final - 2026-11-03 17.00.00/
+    ├── Fund Name - 2026-09-15 - Final - Internal.pdf
+    ├── Another Fund - 2026-10-20 - Final - Client.pdf
+    └── Reports/
+        ├── download_summary.csv
+        ├── downloaded_files.csv
+        ├── candidate_attempts.csv
+        ├── event_issues.csv
+        ├── run_settings.json
         ├── worker.log
-        ├── result.json
-        ├── results.zip                 # only if explicitly prepared
-        └── output\
-            └── <engine timestamp>\
-                ├── run_settings.json
-                └── <population>\
-                    ├── Memos\
-                    ├── download_summary.csv
-                    ├── downloaded_files.csv
-                    ├── candidate_attempts.csv
-                    ├── event_issues.csv
-                    └── population_error.txt   # only after a population error
+        └── result.json
 ```
 
-Preview folders contain no downloaded memos. `event_issues.csv` records source events with unextractable parent references; it is not a complete exclusion log. Filesystem paths in CSVs refer to the producing computer and are not rewritten when a ZIP is moved. The browser displays up to 2,000 summary rows per population; local CSVs contain the full result.
+No `runs/random-id/output/second-timestamp/Primaries/Memos` chain. Only when multiple populations are selected are memo files separated into `Primaries`, `CoInvestments` and/or `Secondaries` folders directly under the batch. In that case, per-population CSVs go under `Reports/<population>` and the run settings/log/status remain directly under `Reports`.
 
-Preparing a browser ZIP is optional and restricted to results totaling at most **150 MiB of source files**. Larger runs remain available in the local output folder; use approved local file-handling methods. This ZIP cap does not limit downloads. Credentials files, source code, and worker logs are not included by the result-packaging function.
+- `Downloads` lives beside `app.py`, not necessarily in the Windows Downloads known folder. The app shows the full path and has an **Open local output folder** button.
+- Preview batches are stored separately under `Previews`, with the same readable naming convention and no memo downloads.
+- Duplicate batch names get `(2)`, `(3)`, etc.; earlier runs are never overwritten.
+- Individual memo filenames and selection rules are unchanged.
+- Packaging a results ZIP puts it inside `Reports`. Its browser download name matches the readable batch name. The archive includes downloaded files recorded in the CSV logs and known report files, not credentials, worker logs, or internal worker status.
+- Browser ZIP preparation is limited to 150 MiB of source files; this does not limit local downloads.
+- The summary table displays the first 2,000 rows; local CSVs contain all rows.
+- CSV paths refer to the producing computer and are not rewritten when the ZIP is moved. `event_issues.csv` is not an exhaustive exclusion log.
+- No automatic deletion is performed. Review or delete incomplete batches after stopping a job, and apply your organization's retention rules.
 
-**No automatic retention cleanup is performed.** Memos and logs may be confidential. Apply your organization's retention rules and delete old run folders when appropriate. Stopping a job may leave partial files/logs; review or delete that incomplete run before relying on it. Previous runs are not overwritten or removed.
+### Updating an existing installation
+
+Stop the current job and server first. Extract this ZIP to a temporary folder, then copy its source, launcher and documentation files into the existing app folder, replacing the old files. Leave your existing `dealcloud-memo-venv`, private credentials, and old downloads untouched. Restart `launch.bat`. This version does not move or rename old run folders; the new layout applies to future jobs only.
+
+The duplicated app-folder name in an existing path comes from ZIP extraction, not the worker. If desired, use a single app folder at a short path when setting up a new installation. Do not move or rename an existing virtual environment; recreate it using setup if you relocate the app.
 
 ## 5. Credential handling and deployment limits
 
@@ -171,7 +175,7 @@ A worker can continue after the browser disconnects. Reconnecting may not restor
 ## 7. Tests and source files
 
 - `original_downloader_v11.py`: original pasted script retained unchanged as a reference. Do not run this file to launch the UI.
-- `downloader_engine.py`: supplied engine with a preview-only branch and manifest indicator. Download-selection, retries, and naming behavior are reused.
+- `downloader_engine.py`: supplied engine with a preview-only branch, manifest indicator and simplified output layout. Download-selection, retries, and naming behavior are reused.
 - `worker.py`: isolated execution, stdin credential transfer, defensive redaction, result status.
 - `ui_support.py`: input validation and safe result packaging.
 - `app.py`: Streamlit controls and worker monitoring.

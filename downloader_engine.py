@@ -291,6 +291,7 @@ def read_linked_parents(dc, config, raw, filters):
 
 
 PREVIEW_ONLY = False
+FIXED_OUTPUT_DIRECTORY = None
 
 
 def main() -> None:
@@ -306,8 +307,10 @@ def main() -> None:
     ):
         raise ValueError("Attempt limit must be a positive integer or None")
     dc = connect_to_dealcloud()
-    output = OUTPUT_ROOT / pd.Timestamp.now(tz=SITE_TIMEZONE).strftime("%Y%m%d_%H%M%S_%f")
-    output.mkdir(parents=True, exist_ok=False)
+    output = Path(FIXED_OUTPUT_DIRECTORY) if FIXED_OUTPUT_DIRECTORY else OUTPUT_ROOT / pd.Timestamp.now(tz=SITE_TIMEZONE).strftime("%Y%m%d_%H%M%S_%f")
+    output.mkdir(parents=True, exist_ok=bool(FIXED_OUTPUT_DIRECTORY))
+    reports_root = output / "Reports"
+    reports_root.mkdir(exist_ok=True)
     manifest = {
         "start_ic_date": str(START_DATE.date()), "end_ic_date": str(END_DATE_INCLUSIVE.date()),
         "site_timezone": SITE_TIMEZONE, "populations": POPULATIONS,
@@ -321,7 +324,7 @@ def main() -> None:
         "mapping": POPULATION_CONFIG, "server_filtered_reads": True, "preview_only": PREVIEW_ONLY, "population_results": [],
     }
     def write_manifest():
-        (output / "run_settings.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (reports_root / "run_settings.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     write_manifest()
     binary_field = None
     binary_checked = False
@@ -329,9 +332,10 @@ def main() -> None:
     for population in POPULATIONS:
         config = POPULATION_CONFIG[population]
         print(f"\n=== {population.upper()} ===", flush=True)
-        folder = output / population
-        memo_dir = folder / "Memos"
-        memo_dir.mkdir(parents=True, exist_ok=False)
+        memo_dir = output if len(POPULATIONS) == 1 else output / population
+        memo_dir.mkdir(parents=True, exist_ok=True)
+        folder = reports_root if len(POPULATIONS) == 1 else reports_root / population
+        folder.mkdir(parents=True, exist_ok=True)
         summary, attempts, issues = [], [], []
         try:
             # Server-side IC-date filter FIRST. No full Fund/object read.

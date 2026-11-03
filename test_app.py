@@ -23,7 +23,7 @@ sys.modules[spec.name] = engine
 with patch.dict(sys.modules, {'dealcloud_sdk': sdk}):
     spec.loader.exec_module(engine)
 
-from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive
+from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive, batch_name, allocate_batch
 from worker import RedactedStream
 
 
@@ -86,8 +86,8 @@ class DownloaderTests(unittest.TestCase):
     def run_engine(self, fake):
         with patch.object(engine, 'connect_to_dealcloud', return_value=fake), patch('sys.stdout', new_callable=io.StringIO):
             engine.main()
-        manifest_path = next((self.directory / 'output').glob('*/run_settings.json'))
-        return json.loads(manifest_path.read_text()), manifest_path.parent
+        manifest_path = next((self.directory / 'output').glob('*/Reports/run_settings.json'))
+        return json.loads(manifest_path.read_text()), manifest_path.parent.parent
     def event(self, stage='Final', date='2026-02-02', audience='internal', id='1', attachment=501):
         values = {'internal_value': {'id': attachment}, 'internal_display': 'memo.pdf', 'internal_field': 'InternalMemo'} if audience == 'internal' else {'client_ready_value': {'id': attachment}, 'client_ready_display': 'memo.pdf', 'client_ready_field': 'ClientReadyMemo'}
         e = engine.Event(source='CIMemo/InternalMemo', event_id=id, deal_id='101', event_date=pd.Timestamp(date), event_type=stage, stage_name=stage, recommendation='Approved', **values)
@@ -167,7 +167,7 @@ class DownloaderTests(unittest.TestCase):
         engine.FILTERS_BY_POPULATION = {'Primaries': {'UnknownField': ['x']}}
         manifest, output = self.run_engine(fake)
         self.assertIn('error', manifest['population_results'][0])
-        self.assertTrue((output / 'Primaries' / 'population_error.txt').exists())
+        self.assertTrue((output / 'Reports' / 'population_error.txt').exists())
     def test_active_filter_matching_and_missing_field(self):
         frame = pd.DataFrame([{'EntryId': 1, 'FundName': 'One', 'AssetClass': 'Private Equity'}, {'EntryId': 2, 'FundName': 'Two', 'AssetClass': 'Credit'}])
         with patch('sys.stdout', new_callable=io.StringIO):
@@ -181,6 +181,22 @@ class DownloaderTests(unittest.TestCase):
         self.assertEqual(pd.read_csv(target).iloc[0]['name'], "'=SUM(1,2)")
     def test_timezone_date_window(self):
         self.assertEqual(engine.parse_event_date('2026-01-02T02:00:00Z'), pd.Timestamp('2026-01-01'))
+
+
+    def test_single_population_memos_are_flat(self):
+        fake = FakeDC()
+        _, output = self.run_engine(fake)
+        self.assertEqual(len(list(output.glob('*.pdf'))), 1)
+        self.assertTrue((output / 'Reports' / 'download_summary.csv').is_file())
+        self.assertFalse((output / 'Primaries').exists())
+        self.assertFalse((output / 'Memos').exists())
+    def test_fixed_batch_has_no_nested_output_timestamp(self):
+        batch = self.directory / 'friendly batch'; batch.mkdir()
+        with patch.object(engine, 'FIXED_OUTPUT_DIRECTORY', batch), patch.object(engine, 'connect_to_dealcloud', return_value=FakeDC()), patch('sys.stdout', new_callable=io.StringIO):
+            engine.main()
+        self.assertTrue((batch / 'Reports' / 'run_settings.json').exists())
+        self.assertEqual(len(list(batch.glob('*.pdf'))), 1)
+        self.assertFalse((batch / 'output').exists())
 
 
 class SupportTests(unittest.TestCase):
@@ -211,16 +227,36 @@ class SupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT) as name:
             root = Path(name); output = root / 'output'; memos = output / 'Primaries' / 'Memos'; memos.mkdir(parents=True)
             (memos / 'memo.pdf').write_bytes(b'simulated')
+            import csv
+            with (output / 'downloaded_files.csv').open('w', newline='') as handle:
+                writer = csv.DictWriter(handle, fieldnames=['File']); writer.writeheader(); writer.writerow({'File': str(memos / 'memo.pdf')})
             (output / 'run_settings.json').write_text('{}')
             (output / 'credentials.json').write_text('do not include')
             (output / 'worker.log').write_text('do not include')
             destination = create_archive(output, root / 'result.zip')
             with zipfile.ZipFile(destination) as archive:
-                self.assertEqual(set(archive.namelist()), {'Primaries/Memos/memo.pdf', 'run_settings.json'})
+                self.assertEqual(set(archive.namelist()), {'Primaries/Memos/memo.pdf', 'run_settings.json', 'downloaded_files.csv'})
     def test_output_path_cannot_escape_job(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as name:
             with self.assertRaises(ValueError):
                 output_directory(Path(name), {'output': '../'})
+
+
+    def test_batch_name_is_readable_and_safe(self):
+        import datetime as dt
+        label = batch_name({'POPULATIONS': ['Primaries'], 'MEMO_STAGES': ['Final']}, dt.datetime(2026, 11, 3, 17, 0, 0))
+        self.assertEqual(label, 'Primaries - Final - 2026-11-03 17.00.00')
+        self.assertNotIn(':', label)
+    def test_same_name_batches_are_not_overwritten(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as name:
+            parent = Path(name)
+            first = allocate_batch(parent, 'Readable batch')
+            second = allocate_batch(parent, 'Readable batch')
+            self.assertEqual(first.name, 'Readable batch')
+            self.assertEqual(second.name, 'Readable batch (2)')
+    def test_batch_itself_is_valid_output(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as name:
+            self.assertEqual(output_directory(Path(name), {'output': '.'}), Path(name).resolve())
 
 
 if __name__ == '__main__':

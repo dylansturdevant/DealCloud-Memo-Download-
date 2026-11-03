@@ -1,6 +1,8 @@
 """Pure-stdlib helpers shared by UI and local tests."""
 from __future__ import annotations
 import hashlib
+import datetime as dt
+import re
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -53,24 +55,55 @@ def output_directory(job_dir: Path, result: dict) -> Path | None:
     if not relative:
         return None
     target = (job_dir / relative).resolve()
-    if job_dir.resolve() not in target.parents or not target.is_dir():
+    if (target != job_dir.resolve() and job_dir.resolve() not in target.parents) or not target.is_dir():
         raise ValueError('Invalid worker output path.')
     return target
 
 
+def batch_name(settings, now=None):
+    now = now or dt.datetime.now()
+    populations = settings.get('POPULATIONS', [])
+    population = populations[0] if len(populations) == 1 else 'Multiple Populations'
+    stages = settings.get('MEMO_STAGES', [])
+    stage = ' + '.join(stages) if stages else 'All Stages'
+    label = f"{population} - {stage} - {now:%Y-%m-%d %H.%M.%S}"
+    # Filesystem-safe and deliberately short; full filters remain in Reports/run_settings.json.
+    return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', label)[:100].rstrip(' .')
+
+
+def allocate_batch(parent: Path, label: str):
+    parent.mkdir(parents=True, exist_ok=True)
+    for number in range(1, 10000):
+        candidate = parent / (label if number == 1 else f'{label} ({number})')
+        try:
+            candidate.mkdir()
+            return candidate
+        except FileExistsError:
+            continue
+    raise OSError('Too many batches with the same name.')
+
+
 def create_archive(output: Path, destination: Path):
-    # Deliberately allow only known result filenames plus memo files.
+    import csv
     allowed = {'run_settings.json', 'download_summary.csv', 'downloaded_files.csv',
                'candidate_attempts.csv', 'event_issues.csv', 'population_error.txt'}
-    files = [p for p in output.rglob('*') if p.is_file() and not p.is_symlink()
-             and output.resolve() in p.resolve().parents
-             and ('Memos' in p.relative_to(output).parts or p.name in allowed)]
+    files = {p for p in output.rglob('*') if p.is_file() and not p.is_symlink()
+             and output.resolve() in p.resolve().parents and p.name in allowed}
+    # Read engine-generated download logs, not arbitrary files dropped into the batch.
+    for log in output.rglob('downloaded_files.csv'):
+        with log.open(newline='', encoding='utf-8-sig') as handle:
+            for row in csv.DictReader(handle):
+                if not row.get('File'):
+                    continue
+                memo = Path(row['File'])
+                if memo.is_file() and not memo.is_symlink() and output.resolve() in memo.resolve().parents:
+                    files.add(memo)
     if sum(p.stat().st_size for p in files) > MAX_ZIP_SOURCE_BYTES:
         raise ValueError('Results exceed the 150 MiB browser-package limit. Open the local output folder instead.')
     temporary = destination.with_suffix('.partial')
     try:
         with zipfile.ZipFile(temporary, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
-            for path in files:
+            for path in sorted(files):
                 archive.write(path, path.relative_to(output))
         temporary.replace(destination)
     finally:

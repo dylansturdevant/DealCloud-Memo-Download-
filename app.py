@@ -6,14 +6,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import uuid
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
-from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive
+from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive, batch_name, allocate_batch
 
 ROOT = Path(__file__).resolve().parent
-RUNS = ROOT / 'runs'
+DOWNLOADS = ROOT / 'Downloads'
+PREVIEWS = ROOT / 'Previews'
 st.set_page_config(page_title='DealCloud Memo Downloader', page_icon='📄', layout='wide')
 st.title('DealCloud Memo Downloader')
 st.caption('Local browser interface · Preview first · Read-only DealCloud operations in the supplied downloader')
@@ -28,11 +28,11 @@ def active_job():
 def launch(preview, settings, timezone, credentials, signature):
     if active_job():
         raise RuntimeError('A job is already running in this browser session.')
-    RUNS.mkdir(exist_ok=True)
-    job_dir = RUNS / f'{dt.datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:12]}'
-    job_dir.mkdir()
+    parent = PREVIEWS if preview else DOWNLOADS
+    job_dir = allocate_batch(parent, batch_name(settings, dt.datetime.now(ZoneInfo(timezone))))
+    (job_dir / 'Reports').mkdir()
     # No credential file, settings file containing credentials, or secret command argument.
-    log_handle = (job_dir / 'worker.log').open('w', encoding='utf-8')
+    log_handle = (job_dir / 'Reports' / 'worker.log').open('w', encoding='utf-8')
     kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
     process = None
     try:
@@ -175,6 +175,9 @@ if start > end:
 signature = fingerprint(settings, timezone.strip(), credentials) if valid else None
 preview_matches = valid and st.session_state.get('approved_preview') == signature
 st.subheader('4 · Preview, then download')
+if valid:
+    st.caption('Downloads save to: ' + str(DOWNLOADS / batch_name(settings, dt.datetime.now(zone))))
+    st.caption('Memos go directly inside the batch folder; reports are separate. Preview batches are stored under Previews. Name shown is illustrative until the job starts.')
 b1, b2 = st.columns(2)
 if b1.button('Preview eligible deals and counts', type='primary', disabled=not valid or bool(active_job())):
     try:
@@ -217,7 +220,7 @@ def job_panel():
             st.rerun()
     if job.get('stopped'):
         st.warning('Stopped. Partial files may remain. Treat this run as incomplete and review or delete its local folder. Prior runs are untouched.')
-    result_path = directory / 'result.json'
+    result_path = directory / 'Reports' / 'result.json'
     result = None
     if not running and result_path.exists():
         try:
@@ -243,7 +246,11 @@ def job_panel():
         output = output_directory(directory, result)
         if output:
             for population in ['Primaries', 'CoInvestments', 'Secondaries']:
-                summary = output / population / 'download_summary.csv'
+                selected_populations = [r.get('population') for r in results]
+                report_folder = output / 'Reports' if len(selected_populations) == 1 else output / 'Reports' / population
+                summary = report_folder / 'download_summary.csv'
+                if population not in selected_populations:
+                    continue
                 if summary.exists():
                     with st.expander(f'{population} · deal results', expanded=True):
                         try:
@@ -257,16 +264,16 @@ def job_panel():
                 os.startfile(str(output))
             if st.button('Prepare results ZIP (up to 150 MiB of source files)'):
                 try:
-                    create_archive(output, directory / 'results.zip')
+                    create_archive(output, directory / 'Reports' / 'results.zip')
                 except (ValueError, OSError) as exc:
                     st.warning(str(exc))
-            archive = directory / 'results.zip'
+            archive = directory / 'Reports' / 'results.zip'
             if archive.exists():
                 with archive.open('rb') as handle:
-                    st.download_button('Save results ZIP', data=handle, file_name=f'dealcloud_{directory.name}.zip', mime='application/zip')
+                    st.download_button('Save results ZIP', data=handle, file_name=f'{directory.name}.zip', mime='application/zip')
     elif not running and not job.get('stopped'):
         st.error('Worker exited without a result manifest. Check the log and installed dependencies.')
-    log = directory / 'worker.log'
+    log = directory / 'Reports' / 'worker.log'
     if log.exists():
         with log.open('rb') as handle:
             handle.seek(0, 2)

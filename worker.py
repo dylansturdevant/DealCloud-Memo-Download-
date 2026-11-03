@@ -37,9 +37,11 @@ class RedactedStream:
 
 def main():
     job_dir = Path(sys.argv[1]).resolve()
-    # Workers can only write to a direct child of this app's runs directory.
-    if job_dir.parent != (ROOT / 'runs').resolve() or not job_dir.is_dir():
+    # Workers can only write to a batch below the app's dedicated results roots.
+    if job_dir.parent not in {(ROOT / 'Downloads').resolve(), (ROOT / 'Previews').resolve()} or not job_dir.is_dir():
         raise ValueError('Invalid run directory')
+    reports = job_dir / 'Reports'
+    reports.mkdir(exist_ok=True)
     payload = json.load(sys.stdin)
     credentials = payload.pop('credentials')
     secrets = [credentials['client_secret'], credentials['client_id']]
@@ -67,17 +69,18 @@ def main():
         engine.START_DATE = pd.Timestamp(cfg['START_IC_DATE']).normalize()
         engine.END_DATE_INCLUSIVE = pd.Timestamp(cfg['END_IC_DATE']).normalize()
         engine.END_DATE_EXCLUSIVE = engine.END_DATE_INCLUSIVE + pd.Timedelta(days=1)
-        engine.OUTPUT_ROOT = job_dir / 'output'
+        engine.OUTPUT_ROOT = job_dir
+        engine.FIXED_OUTPUT_DIRECTORY = job_dir
         engine.PREVIEW_ONLY = payload['preview']
         engine.main()
-        manifests = list(engine.OUTPUT_ROOT.glob('*/run_settings.json'))
+        manifests = list(engine.OUTPUT_ROOT.glob('Reports/run_settings.json'))
         if len(manifests) != 1:
             raise RuntimeError('Expected one run manifest')
         manifest = json.loads(manifests[0].read_text(encoding='utf-8'))
         results = manifest.get('population_results', [])
         if len(results) != len(cfg['POPULATIONS']):
             raise RuntimeError('Run did not report all selected populations')
-        result.update(output=str(manifests[0].parent.relative_to(job_dir)),
+        result.update(output='.',
                       population_results=results)
         # Engine may catch a population error and continue; don't call that full success.
         result['status'] = 'partial' if any('error' in row for row in results) else 'completed'
@@ -88,7 +91,7 @@ def main():
     finally:
         # Defensive redaction for diagnostic text produced by SDK exceptions.
         # Binary memo contents are not opened or modified.
-        for path in job_dir.rglob('*'):
+        for path in reports.rglob('*'):
             if path.is_file() and 'Memos' not in path.parts and path.suffix.lower() in {'.csv', '.json', '.txt'}:
                 try:
                     text = path.read_text(encoding='utf-8-sig')
@@ -98,7 +101,7 @@ def main():
                 except (UnicodeError, OSError):
                     pass
         result = json.loads(out.clean(json.dumps(result)))
-        (job_dir / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+        (reports / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         out.finish()
         err.finish()
     return exit_code
