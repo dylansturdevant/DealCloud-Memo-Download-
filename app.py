@@ -9,6 +9,7 @@ import sys
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
+from filter_options import FILTER_FIELDS
 from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive, batch_name, allocate_batch
 
 ROOT = Path(__file__).resolve().parent
@@ -25,11 +26,11 @@ def active_job():
     return job if job and job['process'].poll() is None else None
 
 
-def launch(preview, settings, timezone, credentials, signature):
+def launch(preview, settings, timezone, credentials, signature, action="run"):
     if active_job():
         raise RuntimeError('A job is already running in this browser session.')
     parent = PREVIEWS if preview else DOWNLOADS
-    job_dir = allocate_batch(parent, batch_name(settings, dt.datetime.now(ZoneInfo(timezone))))
+    job_dir = allocate_batch(parent, ("Filter options - " if action == "options" else "") + batch_name(settings, dt.datetime.now(ZoneInfo(timezone))))
     (job_dir / 'Reports').mkdir()
     # No credential file, settings file containing credentials, or secret command argument.
     log_handle = (job_dir / 'Reports' / 'worker.log').open('w', encoding='utf-8')
@@ -39,7 +40,7 @@ def launch(preview, settings, timezone, credentials, signature):
         process = subprocess.Popen([sys.executable, '-u', str(ROOT / 'worker.py'), str(job_dir)],
             stdin=subprocess.PIPE, stdout=log_handle, stderr=subprocess.STDOUT,
             text=True, encoding='utf-8', cwd=str(ROOT), **kwargs)
-        payload = {'preview': preview, 'settings': settings, 'timezone': timezone,
+        payload = {'action': action, 'preview': preview, 'settings': settings, 'timezone': timezone,
                    'credentials': credentials}
         process.stdin.write(json.dumps(payload))
         process.stdin.close()
@@ -51,7 +52,7 @@ def launch(preview, settings, timezone, credentials, signature):
     finally:
         log_handle.close()
     st.session_state['job'] = {'process': process, 'directory': str(job_dir),
-                              'preview': preview, 'signature': signature, 'handled': False}
+                              'action': action, 'preview': preview, 'signature': signature, 'handled': False}
     if not preview:
         st.session_state.pop('approved_preview', None)
 
@@ -69,7 +70,7 @@ with left:
             if uploaded.size > 65536:
                 raise ValueError('Credentials file must be smaller than 64 KiB.')
             credentials = parse_credentials(uploaded.getvalue())
-            st.success('Credentials file format accepted. Authentication is checked during preview.')
+            st.success('Credentials file format accepted. Authentication is checked when loading filters or previewing.')
             st.caption('Client ID and secret are deliberately not displayed.')
         except ValueError as exc:
             st.error(str(exc))
@@ -77,6 +78,7 @@ with left:
         # Rotate the widget key; Streamlit removes the old widget state on rerun.
         st.session_state['upload_key'] = key + 1
         st.session_state.pop('approved_preview', None)
+        st.session_state.pop('filter_cache', None)
         st.rerun()
     st.download_button('Download blank credentials template',
         data=(ROOT / 'credentials.template.json').read_bytes(),
@@ -119,26 +121,64 @@ with right:
     st.caption('The initial attempt cap defaults to 5 for safety (the supplied script default was unlimited). It is not a byte, storage, or API-read limit. Preview still counts all eligible candidates before this cap.')
 
 st.subheader('3 · Parent-record filters')
-st.caption('One tenant value per line. Empty = unrestricted. OR within a field, AND across active fields. These filter linked parent records, not memo calculations. Values are not fetched as dropdowns.')
-filter_fields = {
-    'Primaries': [('Structure', ''), ('AssetClass', ''), ('Strategy', ''), ('SubStrategy', '')],
-    'CoInvestments': [('Structure Type', ''), ('AssetClass', 'Private Equity'), ('Strategy', ''), ('SubStrategy', ''), ('Status', '')],
-    'Secondaries': [('Structure', 'Secondary Transaction'), ('AssetClass', ''), ('Strategy_1', ''), ('SubStrategy', ''), ('Status', '')],
-}
+st.caption('Searchable multi-selects for actual values on accessible parents linked to memos in the selected IC-date window. Empty = unrestricted. OR within each field, AND across fields.')
+st.caption('Load / Refresh makes read-only API requests for the selected populations and date window, before parent or memo-stage filtering. It does not scan the entire parent object, fetch attachment metadata, or download memos. Options are observed labels, not every configured tenant choice.')
+option_settings = {'START_IC_DATE': start.isoformat(), 'END_IC_DATE': end.isoformat(), 'POPULATIONS': populations}
+option_valid = bool(credentials and timezone_ok and populations and start <= end)
+option_signature = fingerprint(option_settings, timezone.strip(), credentials) if option_valid else None
+if st.button('Load / Refresh filter options from DealCloud', disabled=not option_valid or bool(active_job()), type='primary'):
+    try:
+        st.session_state.pop('approved_preview', None)
+        launch(True, option_settings, timezone.strip(), credentials, option_signature, action='options')
+        st.rerun()
+    except (OSError, RuntimeError):
+        st.error('Unable to start the filter-options worker. Check folder permissions and installed dependencies.')
+cache = st.session_state.get('filter_cache', {})
+cache_matches = bool(option_valid and cache.get('signature') == option_signature)
+option_data = cache.get('options', {}) if cache_matches else {}
+options_ready = cache_matches and all(p in option_data and 'error' not in option_data[p] for p in populations)
+if not options_ready:
+    st.info('Load filter options for the current credentials, populations and IC-date window before previewing. Changing any of those requires another load.')
 filters = {}
+missing_active = False
 for population in populations:
     with st.expander(f'{population} filters', expanded=len(populations) == 1):
+        data = option_data.get(population, {})
+        ready = bool(data and 'error' not in data)
+        if data.get('error'):
+            st.error(data['error'])
+        if ready:
+            st.caption(f"Options from {data['linked_parents']:,} accessible linked parents; blank values omitted. These are not cascading lists: Strategy does not narrow SubStrategy options.")
         if population == 'Primaries':
-            st.caption('Uses Fund → DiligenceActivity. No verified Fund Status alias is assumed. An unrestricted Structure includes all linked Fund structures, not only Primary Partnership.')
+            st.caption('Uses Fund → DiligenceActivity. No verified Fund Status alias is assumed. Unrestricted Structure includes all linked Fund structures, not only Primary Partnership.')
         if population == 'Secondaries':
-            st.caption('Strategy_1 is the active Strategy API field from the supplied mapping, not the legacy Strategy field.')
+            st.caption('Strategy uses the active Strategy_1 API field from the supplied mapping, not the legacy Strategy field.')
         columns = st.columns(3)
         filters[population] = {}
-        for i, (field, default) in enumerate(filter_fields[population]):
-            value = columns[i % 3].text_area(field, value=default, key=f'filter_{population}_{field}', height=100)
-            filters[population][field] = lines(value)
-        extra = st.text_area('Optional additional parent filters (JSON object of field names to lists)', value='{}', key=f'extra_{population}',
-            help='Advanced: actual API/display field names only. Example: {"YourField": ["YourValue"]}. Active missing fields fail rather than being silently ignored.')
+        for i, (field, default) in enumerate(FILTER_FIELDS[population]):
+            observed = data.get('values', {}).get(field, [])
+            # A changed scope gets new controls; refresh of the same scope retains selections.
+            widget_key = f'dropdown_{option_signature}_{population}_{field}_{"loaded" if ready else "unloaded"}'
+            previous = st.session_state.get(widget_key, list(default) if ready else [])
+            choices = sorted(set(observed).union(previous).union(default if ready else []), key=str.casefold)
+            display = {'AssetClass': 'Asset Class', 'SubStrategy': 'SubStrategy', 'Strategy_1': 'Strategy'}.get(field, field)
+            selected = columns[i % 3].multiselect(display, options=choices,
+                default=list(default) if ready else [], key=widget_key, disabled=not ready or bool(active_job()),
+                placeholder='All values (no restriction)', help='Search and select one or more exact tenant labels. Empty = unrestricted.')
+            filters[population][field] = selected
+            unavailable = data.get('unavailable', {}).get(field)
+            if unavailable:
+                columns[i % 3].warning(f'{display}: {unavailable} Leave this filter empty to proceed.')
+                if selected:
+                    missing_active = True
+            absent = [v for v in selected if v not in observed]
+            if ready and absent and not unavailable:
+                columns[i % 3].warning('Selected default/previous value not observed in this window: ' + ', '.join(absent) + '. It remains an active restriction until you clear it.')
+            if ready and not choices and not unavailable:
+                columns[i % 3].caption('No nonblank values observed in this window.')
+        with st.expander(f'Advanced · additional {population} parent filters'):
+            extra = st.text_area('JSON object of field names to lists', value='{}', key=f'extra_{option_signature}_{population}',
+                help='Actual API/display field names only. Example: {"YourField": ["YourValue"]}. Do not repeat the fields above. Active missing fields fail rather than being ignored.')
         try:
             extras = json.loads(extra)
             if not isinstance(extras, dict) or any(not isinstance(k, str) or not k.strip() or not isinstance(v, list)
@@ -148,7 +188,7 @@ for population in populations:
                 raise ValueError()
             filters[population].update(extras)
         except (ValueError, TypeError):
-            st.error(f'{population}: additional filters must be a valid JSON object with nonempty field names and lists of nonempty strings; do not repeat fields shown above.')
+            st.error(f'{population}: additional filters must be valid JSON with nonempty field names and lists of nonempty strings; do not repeat fields shown above.')
             filters[population]['__invalid__'] = True
 
 with st.expander('Selection rules and limitations'):
@@ -168,7 +208,7 @@ settings = {'START_IC_DATE': start.isoformat(), 'END_IC_DATE': end.isoformat(),
     'POPULATIONS': populations, 'FILTERS_BY_POPULATION': filters,
     'RECOMMENDATION_FIELD_BY_POPULATION': {p: 'Recommendation' for p in ['Primaries', 'CoInvestments', 'Secondaries']},
     'MAX_CANDIDATE_ATTEMPTS_PER_POPULATION': cap, 'REQUIRE_VERIFIABLE_FILENAME': strict}
-valid = bool(credentials and timezone_ok and populations and start <= end
+valid = bool(options_ready and not missing_active and credentials and timezone_ok and populations and start <= end
              and not any('__invalid__' in f for f in filters.values()))
 if start > end:
     st.error('Start IC date must be on or before end IC date.')
@@ -204,7 +244,8 @@ def job_panel():
     process = job['process']
     directory = Path(job['directory'])
     running = process.poll() is None
-    st.subheader(('Preview' if job['preview'] else 'Download') + (' running…' if running else ' results'))
+    is_options = job.get('action') == 'options'
+    st.subheader(('Filter options' if is_options else ('Preview' if job['preview'] else 'Download')) + (' running…' if running else ' results'))
     if running:
         st.info('Working locally. Settings edits will not change this in-flight job.')
         if st.button('Stop current job'):
@@ -229,20 +270,29 @@ def job_panel():
             st.warning('Result status could not be read. Review the local log.')
     if not running and not job.get('handled'):
         job['handled'] = True
-        if result and result.get('status') == 'completed' and job['preview'] and not job.get('stopped'):
+        if result and is_options and not job.get('stopped'):
+            st.session_state['filter_cache'] = {'signature': job['signature'], 'options': result.get('options', {})}
+        if result and not is_options and result.get('status') == 'completed' and job['preview'] and not job.get('stopped'):
             st.session_state['approved_preview'] = job['signature']
         st.rerun()
     if result:
         status = result.get('status')
         if status == 'completed' and not job.get('stopped'):
-            st.success('Preview completed — no attachment files downloaded.' if job['preview'] else 'Download run completed. Review counts and candidate-level skips/failures below.')
+            st.success('Filter options loaded. Choose your filters above, then preview.' if is_options else ('Preview completed — no attachment files downloaded.' if job['preview'] else 'Download run completed. Review counts and candidate-level skips/failures below.'))
         elif status == 'partial':
             st.warning('One or more populations failed. Review errors and any partial results. A partial preview does not authorize downloading.')
         elif status == 'failed':
             st.error('Run failed. Review the redacted log below.')
+        if is_options:
+            for population, data in result.get('options', {}).items():
+                if 'error' in data:
+                    st.error(f"{population}: {data['error']}")
         results = result.get('population_results', [])
         if results:
             st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
+            for row in results:
+                for warning in row.get('source_warnings', []):
+                    st.warning(f"{row.get('population')}: {warning}")
         output = output_directory(directory, result)
         if output:
             for population in ['Primaries', 'CoInvestments', 'Secondaries']:

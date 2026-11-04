@@ -6,3 +6,6 @@ __pycache__/
 .streamlit/secrets.toml
 *credentials*.json
 !credentials.template.json
+
+Downloads/
+Previews/

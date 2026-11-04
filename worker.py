@@ -59,6 +59,20 @@ def main():
         import pandas as pd
         import downloader_engine as engine
         cfg = payload['settings']
+        action = payload.get('action', 'run')
+        if action == 'options':
+            from filter_options import load_options
+            engine.START_DATE = pd.Timestamp(cfg['START_IC_DATE']).normalize()
+            engine.END_DATE_INCLUSIVE = pd.Timestamp(cfg['END_IC_DATE']).normalize()
+            engine.END_DATE_EXCLUSIVE = engine.END_DATE_INCLUSIVE + pd.Timedelta(days=1)
+            if engine.START_DATE > engine.END_DATE_INCLUSIVE:
+                raise ValueError('Start IC date must be on or before end IC date.')
+            option_data = load_options(engine.connect_to_dealcloud(), engine, cfg['POPULATIONS'])
+            result.update(action='options', options=option_data)
+            result['status'] = 'partial' if any('error' in row for row in option_data.values()) else 'completed'
+            return 0 if result['status'] == 'completed' else 2
+        if action != 'run':
+            raise ValueError('Unknown worker action')
         for name in ['DOWNLOAD_MODE', 'MEMO_STAGES', 'MEMO_AUDIENCES',
                      'MEMO_APPROVED_BY_IC', 'MEMO_RECOMMENDATIONS', 'POPULATIONS',
                      'FILTERS_BY_POPULATION', 'RECOMMENDATION_FIELD_BY_POPULATION',

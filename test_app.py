@@ -25,6 +25,7 @@ with patch.dict(sys.modules, {'dealcloud_sdk': sdk}):
 
 from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive, batch_name, allocate_batch
 from worker import RedactedStream
+from filter_options import load_options, FILTER_FIELDS
 
 
 class FakeDC:
@@ -197,6 +198,62 @@ class DownloaderTests(unittest.TestCase):
         self.assertTrue((batch / 'Reports' / 'run_settings.json').exists())
         self.assertEqual(len(list(batch.glob('*.pdf'))), 1)
         self.assertFalse((batch / 'output').exists())
+
+
+    def test_dropdown_options_are_observed_tenant_labels(self):
+        fake = FakeDC()
+        with patch('sys.stdout', new_callable=io.StringIO):
+            options = load_options(fake, engine, ['Primaries'])
+        self.assertEqual(options['Primaries']['values']['Structure'], ['Primary Partnership'])
+        self.assertEqual(options['Primaries']['values']['AssetClass'], ['Private Equity'])
+        self.assertIn('Strategy', options['Primaries']['unavailable'])
+        self.assertEqual(fake.downloads, [])
+        self.assertEqual(fake.metadata_calls, 0)
+    def test_options_population_error_is_not_empty_success(self):
+        class Broken(FakeDC):
+            def get_fields(self, obj):
+                raise PermissionError('Access denied')
+        with patch('sys.stdout', new_callable=io.StringIO):
+            data = load_options(Broken(), engine, ['Primaries'])
+        self.assertIn('error', data['Primaries'])
+    def test_options_do_not_apply_default_parent_filters(self):
+        fake = FakeDC()
+        with patch('sys.stdout', new_callable=io.StringIO):
+            options = load_options(fake, engine, ['Primaries'])
+        self.assertEqual(options['Primaries']['linked_parents'], 2)
+        parent_read = [r for r in fake.reads if r['object_id'] == 'Fund'][0]
+        self.assertEqual(set(json.loads(parent_read['query'])), {'EntryId'})
+    def test_all_populations_have_dropdown_definitions(self):
+        self.assertEqual(set(FILTER_FIELDS), {'Primaries', 'CoInvestments', 'Secondaries'})
+        self.assertIn('Strategy_1', dict(FILTER_FIELDS['Secondaries']))
+        self.assertIn('Structure Type', dict(FILTER_FIELDS['CoInvestments']))
+    def test_option_loader_rejects_invalid_population(self):
+        with self.assertRaises(ValueError):
+            load_options(FakeDC(), engine, ['Unknown'])
+
+
+class MultiPopulationOptionsTests(unittest.TestCase):
+    def test_each_population_reads_its_own_parent_fields(self):
+        # Isolate option aggregation from the separately tested SDK read pipeline.
+        schemas = {}
+        parents = {}
+        for pop, config in engine.POPULATION_CONFIG.items():
+            labels = {field: f'{pop} {field} label' for field, _ in FILTER_FIELDS[pop]}
+            parents[config['parent']] = pd.DataFrame([labels])
+            schemas[config['parent']] = set(labels)
+        def select(dc, obj, fields):
+            if not set(fields).issubset(schemas[obj]):
+                raise KeyError('missing')
+            return fields
+        def read_parents(dc, config, raw, requested):
+            self.assertEqual(set(requested), schemas[config['parent']])
+            return parents[config['parent']]
+        with patch.object(engine, 'read_windowed_memos', return_value=(pd.DataFrame(), pd.DataFrame())), patch.object(engine, 'api_field_selection', side_effect=select), patch.object(engine, 'read_linked_parents', side_effect=read_parents), patch('sys.stdout', new_callable=io.StringIO):
+            result = load_options(object(), engine, list(FILTER_FIELDS))
+        for pop in FILTER_FIELDS:
+            self.assertNotIn('error', result[pop])
+            for field, _ in FILTER_FIELDS[pop]:
+                self.assertEqual(result[pop]['values'][field], [f'{pop} {field} label'])
 
 
 class SupportTests(unittest.TestCase):

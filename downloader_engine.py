@@ -231,11 +231,24 @@ def recommendation_field_for_object(object_name):
 def read_windowed_memos(dc, config):
     obj = config["memo_object"]
     recommendation_fields = [recommendation_field_for_object(obj)]
-    if obj == "SecondaryMemo":
+    # TeamDiscussionMemo is an additional Secondary stream, not a prerequisite
+    # for reading canonical INTERNALMEMO/ClientMemo attachments.
+    optional_fields = {"TeamDiscussionMemo"} if obj == "SecondaryMemo" else set()
+    schema_missing = []
+    memo_fields = []
+    for field_name in [*config["internal"], *config["client"]]:
+        if field_name in optional_fields:
+            try:
+                api_field_selection(dc, obj, [field_name])
+            except KeyError:
+                schema_missing.append(field_name)
+                continue
+        memo_fields.append(field_name)
+    if obj == "SecondaryMemo" and "TeamDiscussionMemo" in memo_fields:
         recommendation_fields.append("TeamDiscussionRecommendation")
     if obj == "DiligenceActivity":
         recommendation_fields.append("RecommendationApprovedbyIC")
-    fields = api_field_selection(dc, obj, [config["reference"], "ICDate", "Stage", *recommendation_fields, *config["internal"], *config["client"]])
+    fields = api_field_selection(dc, obj, [config["reference"], "ICDate", "Stage", *recommendation_fields, *memo_fields])
     # Convert local inclusive calendar days to [start, next-day) UTC bounds.
     # Localizing each boundary separately accounts for daylight saving changes.
     start = START_DATE.tz_localize(SITE_TIMEZONE).tz_convert("UTC").isoformat().replace("+00:00", "Z")
@@ -247,11 +260,13 @@ def read_windowed_memos(dc, config):
     raw = filtered_read(dc, obj, fields, query, "id")
     attach_field_schema_aliases(dc, obj, raw)
     raw = enforce_local_ic_window(raw, obj, "id")
+    raw.attrs["unavailable_optional_memo_fields"] = schema_missing
     if raw.empty:
         return raw.copy(), raw
     names = filtered_read(dc, obj, fields, query, "name")
     attach_field_schema_aliases(dc, obj, names)
     names = enforce_local_ic_window(names, obj, "name")
+    names.attrs["unavailable_optional_memo_fields"] = schema_missing
     validate_event_pairing(names, raw)
     return names, raw
 
@@ -337,9 +352,20 @@ def main() -> None:
         folder = reports_root if len(POPULATIONS) == 1 else reports_root / population
         folder.mkdir(parents=True, exist_ok=True)
         summary, attempts, issues = [], [], []
+        source_warnings = []
         try:
             # Server-side IC-date filter FIRST. No full Fund/object read.
             names, raw = read_windowed_memos(dc, config)
+            missing_optional = set(raw.attrs.get("unavailable_optional_memo_fields", []))
+            if population == "Secondaries" and not raw.empty:
+                if not find_column(names, ["TeamDiscussionMemo"]) and not find_column(raw, ["TeamDiscussionMemo"]):
+                    missing_optional.add("TeamDiscussionMemo")
+            for field_name in sorted(missing_optional):
+                warning = (f"{config['memo_object']}.{field_name} unavailable in schema or returned columns; "
+                    "this optional stream is excluded. Counts cover only available mapped memo fields; "
+                    "Team Discussion coverage is NOT verified. Check tenant schema/permissions if required.")
+                source_warnings.append(warning)
+                print(f"WARNING: {warning}", flush=True)
             ic_flags = {}
             if population == "Primaries":
                 flag_column = find_column(raw, ["RecommendationApprovedbyIC"])
@@ -360,6 +386,8 @@ def main() -> None:
             if not matching.empty:
                 for audience, fields in (("Internal", config["internal"]), ("Client", config["client"])):
                     for file_field in fields:
+                        if population == "Secondaries" and file_field == "TeamDiscussionMemo" and file_field in missing_optional:
+                            continue
                         if not find_column(names, [file_field]) and not find_column(raw, [file_field]):
                             raise KeyError(f"Mapped memo field {file_field!r} not found on {config['memo_object']}")
                         source = f"{config['memo_object']}/{file_field}"
@@ -379,7 +407,7 @@ def main() -> None:
                                 histories[event.deal_id].events.append(event)
             observed = sorted({e.recommendation or "(blank)" for h in histories.values() for e in h.events if e.in_window and memo_stage_priority(e) is not None})
             print(f"Memo recommendation field: {config['memo_object']}.{RECOMMENDATION_FIELD_BY_POPULATION[population]}", flush=True)
-            if population == "Secondaries":
+            if population == "Secondaries" and "TeamDiscussionMemo" not in missing_optional:
                 print("TeamDiscussionMemo uses TeamDiscussionRecommendation", flush=True)
             print(f"Memo recommendation values in window: {observed}", flush=True)
             print(f"Recommendation filter: {MEMO_RECOMMENDATIONS or 'all (including blank)'}", flush=True)
@@ -395,7 +423,7 @@ def main() -> None:
                         "Eligible Candidates": len(choices), "Candidates Tried": 0, "Files Downloaded": 0})
                 manifest["population_results"].append({"population": population,
                     "matched_parents": len(matching), "eligible_candidates": count,
-                    "attempted_candidates": 0, "downloaded": 0})
+                    "attempted_candidates": 0, "downloaded": 0, "source_warnings": source_warnings})
                 print(f"PREVIEW ONLY: {count:,} candidates; no attachment metadata or file downloads requested.", flush=True)
                 continue
             if count and not binary_checked:
@@ -438,12 +466,12 @@ def main() -> None:
             downloaded = sum(row["Files Downloaded"] for row in summary)
             total_downloaded += downloaded
             manifest["population_results"].append({"population": population, "matched_parents": len(matching),
-                "eligible_candidates": count, "attempted_candidates": len(attempts), "downloaded": downloaded})
+                "eligible_candidates": count, "attempted_candidates": len(attempts), "downloaded": downloaded, "source_warnings": source_warnings})
             print(f"{population}: downloaded {downloaded:,}; attempted {len(attempts):,}")
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             (folder / "population_error.txt").write_text(error, encoding="utf-8")
-            manifest["population_results"].append({"population": population, "error": error})
+            manifest["population_results"].append({"population": population, "error": error, "source_warnings": source_warnings})
             print(f"ERROR in {population}: {error}; continuing with other populations", flush=True)
         finally:
             write_csv(summary, folder / "download_summary.csv", ["Population", "Deal ID", "Deal", "Status",
@@ -922,6 +950,16 @@ def extract_reference_ids(value: Any) -> list[str]:
     text = str(value).strip()
     if re.fullmatch(r"\d+(?:\.0)?", text):
         return [re.sub(r"\.0$", "", text)]
+
+    # resolve="id" can flatten a multi-reference cell to "4082036; 4081547".
+    # Recognize ONLY an entire semicolon-delimited sequence of numeric IDs;
+    # never extract arbitrary numbers from filenames or descriptive text.
+    # attachment_field_items then pairs each ID with its corresponding display
+    # filename so supplementary exclusion applies to the right attachment.
+    if re.fullmatch(r"\d+(?:\.0)?(?:\s*;\s*\d+(?:\.0)?)+", text):
+        return unique_preserving_order(
+            re.sub(r"\.0$", "", token.strip()) for token in text.split(";")
+        )
 
     keyed = re.findall(
         r"[\"']?(?:id|entryId|EntryId|entry_id)[\"']?\s*[:=]\s*[\"']?(\d+)",

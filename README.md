@@ -4,6 +4,26 @@ A local browser interface for the supplied v11 downloader, with uploaded JSON cr
 
 **Status:** implementation and simulated tests only. No live DealCloud connection has been made. The Windows launcher and browser experience must be checked on a Windows computer. Package versions are not a live-tested lockfile.
 
+## Multi-attachment parsing fix (v3.3)
+
+The SDK may return multiple attachment references as a semicolon-separated numeric string. The engine now splits that complete ID sequence and pairs each ID with its corresponding display filename. Previously the unsplit cell could be mistaken for a direct file field, causing a file-not-found response or preventing the intended internal memo from being considered correctly. Known supplementary files remain excluded individually. No credentials, selection defaults, output paths or dependency changes are needed.
+
+**Updating from v3.2:** stop the active job and server, replace only `downloader_engine.py` beside `app.py`, and restart `launch.bat`. Refresh options and run a new preview before downloading. Older versions should use the full package, preserving the existing environment and private credentials. Old downloads are not moved or deleted. No live download has been performed by the developer to verify the corrected route.
+
+Offline verification: `test_multireference.py` covers numeric multi-reference parsing, filename alignment, supplementary exclusion, priority/all modes and paired ID/name reads. Run all tests with:
+
+```powershell
+.\dealcloud-memo-venv\Scripts\python.exe -m unittest -v test_app.py test_ui_smoke.py test_secondary.py test_multireference.py
+```
+
+## Secondary memo compatibility fix (v3.2)
+
+`SecondaryMemo.TeamDiscussionMemo` is now treated as an additional optional stream. If the field is absent from the accessible schema or from both returned resolutions, the app continues processing the mapped `INTERNALMEMO` and `ClientMemo` fields, with an explicit coverage warning in the UI, log and `run_settings.json`. It does not claim that Team Discussion coverage is complete or move it to another object by guessing a mapping. Have your administrator verify schema and permissions if you need that stream.
+
+Canonical mapped fields remain required: their absence still produces an error. When TeamDiscussionMemo is available, its existing selection behavior and TeamDiscussionRecommendation mapping are retained. Counts may be lower when an optional stream cannot be read. The app does not infer that a missing column means there are no underlying attachments.
+
+To apply only this runtime fix to v3/v3.1, replace **both `downloader_engine.py` and `app.py`**, then restart the app, refresh options and rerun preview. No dependency or credential change is required. The full ZIP also includes `test_secondary.py`; run it with the existing test suite for offline verification.
+
 ## 1. First-time setup
 
 1. Extract the entire ZIP into a writable local folder. Do not run it from inside the ZIP. A short path is preferable because Windows path-length limits can affect downloads.
@@ -53,11 +73,22 @@ This script uses **client ID + client secret + site URL**, not a single API-key 
 4. Choose **priority** (one successful memo per parent) or **all** eligible memo attachments.
 5. Select memo stages and audiences. Empty selections mean all supported stages or both audiences.
 6. Set the optional Primaries-only **Approved by IC?** filter and optional recommendation filter.
-7. Enter parent-record filters, one actual tenant value per line. Empty = unrestricted. Multiple values within a field mean OR; filters across fields mean AND. Optional advanced filters use a JSON object of field names to lists.
+7. Click **Load / Refresh filter options from DealCloud**. After it completes, use the searchable multi-select dropdowns for Structure/Structure Type, Asset Class, Strategy, SubStrategy, and Status where mapped. Empty = unrestricted. Multiple values within a field mean OR; filters across fields mean AND. Additional JSON filters are tucked into each population's **Advanced** section.
 8. Click **Preview eligible deals and counts**. Preview authenticates and reads schema, memo records, and linked parents. It does **not** request attachment metadata or download attachment files. Local preview CSVs and settings are still written.
 9. Review the preview, check the authorization box, and click **Download memos**. Changing settings or credentials requires a new successful preview. Partial or failed previews do not authorize downloading.
 10. Inspect counts, CSV logs, and any failures. Open the local output folder or optionally prepare a results ZIP.
 11. Click **Clear uploaded credentials** when finished, then stop the server. This does not erase your original JSON file from disk or promise forensic memory erasure.
+
+### How the dropdown values are loaded
+
+- All three populations use searchable multi-select parent filters. The optional memo Recommendation filter remains a free-text list; memo stages, audiences and primary approval already have selection controls.
+- Values come from **actual accessible parent records linked to memos in the selected IC-date window**, using the supplied mappings and human-readable SDK values. The loader does not read every Fund/deal record, invent reference labels, or claim to enumerate every configured schema choice.
+- Options are loaded before applying parent, memo-stage, audience, recommendation or IC-approval filters. They are not cascading dropdowns: selecting a Strategy does not narrow SubStrategy options. A selectable label is not a guarantee that a memo will pass the later filters.
+- Loading authenticates and reads memo records and linked parents, so a broad date range may take time. It does not fetch attachment metadata, download memos, or write to DealCloud. Progress appears in the job log. Use Stop current job to cancel.
+- Changing credentials, selected populations, dates or timezone requires reloading options. Refreshing options invalidates the download authorization preview; run Preview again. Changing a parent filter does not reload options but does require a new preview before downloading.
+- Empty means no restriction. Defaults from the original script are retained. If a default or previously selected value is not observed in the current window, it remains explicitly selected with a warning rather than silently broadening the filter. Clear it if you do not want that restriction.
+- Missing/inaccessible fields are identified in the UI. They may remain unrestricted, but an active selection on an unavailable field blocks preview until cleared. A population read failure is reported as an error, not shown as an empty successful list.
+- Loaded labels are cached in the current browser session and are also saved in the options job's `Reports/result.json` under `Previews/Filter options - <batch name>`. These are tenant data: protect them and delete old options batches according to your retention policy. Credentials are not intentionally saved in these files.
 
 ### Initial defaults
 
@@ -162,7 +193,7 @@ Confirm the tenant URL, client credentials, read permissions, and the supplied p
 
 ### Download button disabled
 
-Upload valid credentials, select a population and valid date range/timezone, complete a fully successful preview for the current settings, and check the authorization checkbox. An active worker also disables new launches. Changed settings/credentials require another preview.
+Upload valid credentials, select a population and valid date range/timezone, load filter options successfully for all selected populations, complete a fully successful preview for the current settings, and check the authorization checkbox. An active worker also disables new launches. Changed settings/credentials require another preview.
 
 ### No files downloaded, or only some populations completed
 
@@ -178,6 +209,7 @@ A worker can continue after the browser disconnects. Reconnecting may not restor
 - `downloader_engine.py`: supplied engine with a preview-only branch, manifest indicator and simplified output layout. Download-selection, retries, and naming behavior are reused.
 - `worker.py`: isolated execution, stdin credential transfer, defensive redaction, result status.
 - `ui_support.py`: input validation and safe result packaging.
+- `filter_options.py`: actual observed parent-filter labels for all three populations, scoped to the chosen IC-date window; missing-field and per-population error reporting.
 - `app.py`: Streamlit controls and worker monitoring.
 - `test_app.py`: offline unittest suite using a fake SDK. No tenant credentials are required.
 - `TEST_RESULTS.md`: records the checks performed for this package.
@@ -185,7 +217,7 @@ A worker can continue after the browser disconnects. Reconnecting may not restor
 Run offline tests after installation:
 
 ```powershell
-.\dealcloud-memo-venv\Scripts\python.exe -m unittest -v test_app.py
+.\dealcloud-memo-venv\Scripts\python.exe -m unittest -v test_app.py test_ui_smoke.py
 ```
 
 Simulated tests cannot validate your tenant's schema, actual SDK/network behavior, file permissions, Windows launcher behavior, or browser interactions. Begin live validation with one population, a narrow IC window, strict filename checks if required, and the 5-attempt cap enabled.

@@ -2,8 +2,14 @@
 
 ## Completed checks
 
-- Six Python source files passed Python syntax/AST checks.
-- **26 offline unittest cases passed**, with zero failures and zero errors.
+- Ten Python source files passed Python syntax/AST checks.
+- **48 offline tests passed**, with zero failures and zero errors.
+- Seven multi-reference regression tests cover semicolon-delimited numeric IDs, normalization, rejection of numbers in filenames, alignment with individual display filenames, supplementary exclusion, candidate selection and event building.
+- The three supplied diagnostic ID/name pairs were checked in memory: each yielded one retained memo attachment and one excluded supplementary attachment. No diagnostic tenant data is included in the distribution, and no live attachment download was performed.
+- Six Secondary regression cases verify missing optional schema/returned columns produce explicit coverage warnings, available TeamDiscussion streams remain included, required canonical field absence still fails, and canonical downloads work without the optional stream.
+- Startup hotfix: corrected the initial option-loading check to avoid referring to options_ready/missing_active before assignment; the later preview check now requires loaded options and no active unavailable fields.
+- Three additional regression tests execute app.py with a lightweight Streamlit stub: no credentials, credentials before options are loaded, and loaded options for all populations. These are not real browser tests.
+- Dropdown tests cover observed tenant labels, missing-field reporting, population read failures, unfiltered linked-parent option scope, population validation, and per-population mappings for Primaries, CoInvestments and Secondaries.
 - Additional output-layout tests cover flat single-population memo placement, removal of nested output/timestamp layers, readable filesystem-safe batch names, collision-safe naming, and the batch itself as the output directory.
 - Test runtime: Python 3.14.8, pandas 3.0.6. This is the analysis runtime, not a recommendation to use that Python version on Windows.
 - DealCloud SDK access was replaced with a fake in the offline tests; no actual credentials, authentication, tenant reads, or real memo downloads were used.
