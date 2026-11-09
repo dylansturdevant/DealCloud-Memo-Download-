@@ -4,3 +4,6 @@ streamlit>=1.41,<2
 dealcloud-sdk
 pandas>=2
 tzdata
+
+# Excel deal-list uploads
+openpyxl>=3.1,<4

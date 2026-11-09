@@ -38,7 +38,7 @@ class RedactedStream:
 def main():
     job_dir = Path(sys.argv[1]).resolve()
     # Workers can only write to a batch below the app's dedicated results roots.
-    if job_dir.parent not in {(ROOT / 'Downloads').resolve(), (ROOT / 'Previews').resolve()} or not job_dir.is_dir():
+    if job_dir.parent not in {(Path.home() / 'DealCloud Memos' / 'Downloads').resolve(), (Path.home() / 'DealCloud Memos' / 'Previews').resolve()} or not job_dir.is_dir():
         raise ValueError('Invalid run directory')
     reports = job_dir / 'Reports'
     reports.mkdir(exist_ok=True)
@@ -60,6 +60,11 @@ def main():
         import downloader_engine as engine
         cfg = payload['settings']
         action = payload.get('action', 'run')
+        if action == 'excel':
+            from excel_executor import run_excel
+            excel_result = run_excel(engine.connect_to_dealcloud(), engine, cfg, job_dir, payload['preview'])
+            result.update(excel_result, action='excel')
+            return 0 if result['status'] == 'completed' else 2
         if action == 'options':
             from filter_options import load_options
             engine.START_DATE = pd.Timestamp(cfg['START_IC_DATE']).normalize()

@@ -12,6 +12,17 @@ MAX_CREDENTIAL_BYTES = 65536
 MAX_ZIP_SOURCE_BYTES = 150 * 1024 * 1024
 
 
+def excel_preview_usable(result):
+    """Warnings/unmatched rows remain visible but need not block other matches."""
+    return bool(isinstance(result, dict)
+                and result.get('status') in {'completed', 'partial'}
+                and not result.get('error')
+                and result.get('excel_summary', {}).get('preview') is True
+                and result.get('excel_summary', {}).get('eligible_candidates', 0) > 0
+                and result.get('population_results')
+                and all(not row.get('error') for row in result['population_results']))
+
+
 def parse_credentials(raw: bytes) -> dict[str, str]:
     if len(raw) > MAX_CREDENTIAL_BYTES:
         raise ValueError('Credentials file must be smaller than 64 KiB.')
@@ -86,7 +97,7 @@ def allocate_batch(parent: Path, label: str):
 def create_archive(output: Path, destination: Path):
     import csv
     allowed = {'run_settings.json', 'download_summary.csv', 'downloaded_files.csv',
-               'candidate_attempts.csv', 'event_issues.csv', 'population_error.txt'}
+               'candidate_attempts.csv', 'event_issues.csv', 'population_error.txt', 'excel_results.csv', 'excel_issues.json'}
     files = {p for p in output.rglob('*') if p.is_file() and not p.is_symlink()
              and output.resolve() in p.resolve().parents and p.name in allowed}
     # Read engine-generated download logs, not arbitrary files dropped into the batch.
@@ -96,6 +107,8 @@ def create_archive(output: Path, destination: Path):
                 if not row.get('File'):
                     continue
                 memo = Path(row['File'])
+                if not memo.is_absolute():
+                    memo = output / memo
                 if memo.is_file() and not memo.is_symlink() and output.resolve() in memo.resolve().parents:
                     files.add(memo)
     if sum(p.stat().st_size for p in files) > MAX_ZIP_SOURCE_BYTES:

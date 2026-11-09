@@ -1674,7 +1674,8 @@ def run_attachment_request_with_retry(
         except Exception as exc:
             if cleanup_path is not None:
                 cleanup_path.unlink(missing_ok=True)
-            retryable = is_retryable_attachment_error(exc) or isinstance(exc, IOError)
+            local_path_error = isinstance(exc, (FileNotFoundError, PermissionError, NotADirectoryError, IsADirectoryError)) or getattr(exc, 'errno', None) == 36
+            retryable = not local_path_error and (is_retryable_attachment_error(exc) or isinstance(exc, IOError))
             if not retryable or attempt >= attempts:
                 raise
             delay = min(

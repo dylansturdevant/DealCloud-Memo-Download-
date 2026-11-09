@@ -13,8 +13,9 @@ from filter_options import FILTER_FIELDS
 from ui_support import parse_credentials, fingerprint, lines, output_directory, create_archive, batch_name, allocate_batch
 
 ROOT = Path(__file__).resolve().parent
-DOWNLOADS = ROOT / 'Downloads'
-PREVIEWS = ROOT / 'Previews'
+RESULTS_ROOT = Path.home() / 'DealCloud Memos'
+DOWNLOADS = RESULTS_ROOT / 'Downloads'
+PREVIEWS = RESULTS_ROOT / 'Previews'
 st.set_page_config(page_title='DealCloud Memo Downloader', page_icon='📄', layout='wide')
 st.title('DealCloud Memo Downloader')
 st.caption('Local browser interface · Preview first · Read-only DealCloud operations in the supplied downloader')
@@ -55,6 +56,13 @@ def launch(preview, settings, timezone, credentials, signature, action="run"):
                               'action': action, 'preview': preview, 'signature': signature, 'handled': False}
     if not preview:
         st.session_state.pop('approved_preview', None)
+
+
+input_mode = st.radio('Input mode', ['Filter-based search', 'Excel deal list'], horizontal=True, disabled=bool(active_job()), key='input_mode')
+if input_mode == 'Excel deal list':
+    from excel_ui import render
+    render(ROOT, RESULTS_ROOT)
+    st.stop()
 
 
 left, right = st.columns([1, 2])
@@ -239,7 +247,7 @@ if not preview_matches:
 @st.fragment(run_every=1)
 def job_panel():
     job = st.session_state.get('job')
-    if not job:
+    if not job or job.get('action') == 'excel':
         return
     process = job['process']
     directory = Path(job['directory'])

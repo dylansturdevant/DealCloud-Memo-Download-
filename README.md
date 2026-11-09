@@ -1,55 +1,168 @@
-# DealCloud Memo Downloader — Local Streamlit App
+# DealCloud Memo Downloader
 
-A local browser interface for the supplied v11 downloader, with uploaded JSON credentials, interactive filters, a preview step, and a Windows double-click launcher.
+A small app that runs on your own computer and downloads investment memos from DealCloud in bulk. You give it a list of deals (an Excel file) or pick filters, it shows you what it found, and then it saves the memo files to a folder on your computer, either all together or sorted into a folder per client.
 
-**Status:** implementation and simulated tests only. No live DealCloud connection has been made. The Windows launcher and browser experience must be checked on a Windows computer. Package versions are not a live-tested lockfile.
+You don't need to know any Python. You install it once, then you just double-click a file to open the app in your web browser.
 
-## Multi-attachment parsing fix (v3.3)
+---
 
-The SDK may return multiple attachment references as a semicolon-separated numeric string. The engine now splits that complete ID sequence and pairs each ID with its corresponding display filename. Previously the unsplit cell could be mistaken for a direct file field, causing a file-not-found response or preventing the intended internal memo from being considered correctly. Known supplementary files remain excluded individually. No credentials, selection defaults, output paths or dependency changes are needed.
+## First-time setup (about 15 minutes, once per computer)
 
-**Updating from v3.2:** stop the active job and server, replace only `downloader_engine.py` beside `app.py`, and restart `launch.bat`. Refresh options and run a new preview before downloading. Older versions should use the full package, preserving the existing environment and private credentials. Old downloads are not moved or deleted. No live download has been performed by the developer to verify the corrected route.
+### What you need
 
-Offline verification: `test_multireference.py` covers numeric multi-reference parsing, filename alignment, supplementary exclusion, priority/all modes and paired ID/name reads. Run all tests with:
+| Item | Needed? | Where to get it |
+|---|---|---|
+| **Python** | **Yes** | Company Portal (search "Python") |
+| **This app's folder** | **Yes** | From whoever sent you this README |
+| **Your DealCloud API credentials** | **Yes** | Your DealCloud admin (see Step 4) |
+| Microsoft Excel | Yes, for deal lists | Already on your laptop |
+| ODBC Driver 18 | **No** | Not used. The app connects to DealCloud over the web, not through a database driver. |
+| VS Code | **No** | Not needed. You never open or edit code. Notepad is enough for the one file you fill in. |
 
-```powershell
-.\dealcloud-memo-venv\Scripts\python.exe -m unittest -v test_app.py test_ui_smoke.py test_secondary.py test_multireference.py
+**What is Python?** It's the program that runs this app, the way Excel runs a spreadsheet. You install it, but you never have to open it or write anything in it.
+
+### Step 1: Install Python
+
+1. Open **Company Portal**, search for **Python**, and install it. If there are several versions, choose a Python 3 version (3.11, 3.12 or newer). If you don't see Python at all, ask IT to install it; mention you need the **`py` launcher** (or "Python Install Manager"), because the setup script uses it.
+2. **Restart your computer** after it installs. This makes sure Windows can find it.
+3. Check it worked: press the **Windows key**, type **cmd**, press **Enter**. In the black window that opens, type the following and press Enter:
+
+   ```text
+   py --version
+   ```
+
+   You should see something like `Python 3.12.x`. If you see *"'py' is not recognized"*, Python isn't installed correctly yet. Ask IT and mention the `py` launcher. Close the black window when you're done.
+
+### Step 2: Put the app folder in the right place
+
+Where the folder lives matters. Windows has a limit on how long file paths can be, and putting the app somewhere deep (like inside OneDrive) makes setup fail with *"The filename or extension is too long"*.
+
+1. If you received a **.zip** file, right-click it → **Extract All…**. Don't run anything from inside the zip; double-clicking files inside a zip without extracting won't work.
+2. Move the extracted folder (the one containing `app.py`, `setup.bat` and `launch.bat`) to a short location that is **not** in OneDrive, for example:
+
+   ```text
+   C:\Users\<your name>\DCMemo
+   ```
+
+   Avoid your **Desktop** and **Documents** folders too; on most work laptops those are synced to OneDrive.
+
+### Step 3: Run setup (once)
+
+1. Open the app folder and double-click **`setup.bat`**.
+2. A black window opens and fills with text while it downloads what the app needs. This takes a few minutes. That's normal.
+3. When it says **"Setup complete"**, press any key to close it.
+
+This creates a folder called `dealcloud-memo-venv` inside the app folder. That's the app's private copy of everything it needs. Leave it alone; don't move, rename or delete it.
+
+If it says **"Setup failed"**, see *Troubleshooting* below. If Windows shows a security warning or blocks the file, check with IT rather than overriding it.
+
+### Step 4: Create your credentials file
+
+The app logs in to DealCloud with API credentials: a site address, a client ID and a client secret. These are personal, like a password. Get your own from your DealCloud administrator; don't borrow someone else's.
+
+1. In the app folder, find **`credentials.template.json`**. Copy it and paste the copy somewhere private on your computer, **outside the app folder** (so it never gets passed along when the app is shared) and outside OneDrive/shared folders. For example, `C:\Users\<your name>\DealCloud Memos\my-dealcloud-credentials.json` (create the folder if it doesn't exist).
+2. Right-click your copy → **Open with** → **Notepad**.
+3. Replace the three placeholder values, keeping the quote marks:
+
+   ```json
+   {
+     "site_url": "https://your-site.dealcloud.com",
+     "client_id": "your-client-id",
+     "client_secret": "your-client-secret"
+   }
+   ```
+
+4. Save and close.
+
+Treat this file like a password: don't email it, put it in Teams/SharePoint, or share it.
+
+### Step 5: Open the app (every time you use it)
+
+1. Double-click **`launch.bat`** in the app folder.
+2. A black window opens, and the app opens in your web browser at **http://127.0.0.1:8501**. If the browser doesn't open by itself, copy that address into your browser.
+3. **Keep the black window open** while you use the app. It *is* the app running in the background. Closing it closes the app.
+4. When you're finished, close the black window (or click in it and press **Ctrl+C**).
+
+The app only runs on your computer. Nobody else can open your copy.
+
+---
+
+## Using it: downloading memos from an Excel list
+
+1. At the top of the app, choose **Excel deal list**.
+2. **Connection:** upload your credentials file from Step 4. Leave the timezone as `America/New_York` unless told otherwise.
+3. **Memo rule:** *Priority fallback* is a good default. It takes the Final memo if there is one, otherwise Screening, then Follow-On, then Update.
+4. **Save layout:**
+   - **One folder (unique memos):** every memo saved once, all in one folder.
+   - **Folder per client:** a folder for each client, each holding every memo that client needs. A deal shared by several clients is downloaded once and copied into each client's folder.
+5. **Workbook:** click **Download Excel template**, fill it in (one deal per row; for *Folder per client*, one row per client + deal), save it, and upload it. Deal names must match DealCloud exactly; capital letters and extra spaces don't matter.
+6. Click **Preview Excel list**. Nothing is downloaded yet; it checks every name and shows what it would download. Look for rows marked **UNMATCHED** (name not found) or **AMBIGUOUS** (more than one match), and fix those names in your spreadsheet if needed.
+7. Tick **"I reviewed this preview…"** and click **Download Excel-list memos**.
+8. When it finishes, click **Open Excel-results folder**. Each run gets its own new folder, so nothing old is ever overwritten.
+
+**Where files are saved:** `C:\Users\<your name>\DealCloud Memos\Downloads\`. The **Reports** folder inside each run has a spreadsheet (`excel_results.csv`) listing what happened to every row.
+
+**First time?** Leave **"Limit candidate attempts"** ticked and try a list of 3–5 deals first. Once that works, untick it for full lists.
+
+---
+
+## Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| *"'py' is not recognized"* or *"Python launcher not found"* | Python isn't installed, or the computer hasn't been restarted since. Restart; if it still fails, ask IT for Python with the `py` launcher. |
+| *"The filename or extension is too long"* during setup | The app folder is too deep (usually in OneDrive). Move it to `C:\Users\<your name>\DCMemo`, delete the half-made `dealcloud-memo-venv` folder, and run `setup.bat` again. |
+| *"Setup failed"* with network/proxy/SSL errors | Setup couldn't download packages. Make sure you're on the company network/VPN. If it still fails, send IT the full error text. |
+| Double-clicking does nothing, or the window flashes and closes | Make sure you extracted the zip (Step 2) and are clicking inside the extracted folder. |
+| *"port 8501 is occupied"* | The app is already open in another black window. Use that one, or close it and launch again. |
+| *"Credentials format accepted"* but Preview fails to log in | The values in your credentials file are wrong or expired. Check them with your DealCloud admin. |
+| *"Replace the template placeholders…"* | You uploaded the template itself. Fill in your real values (Step 4). |
+| A deal shows **UNMATCHED** | The name doesn't exactly match DealCloud. Copy the name from DealCloud into your spreadsheet. |
+
+## Getting a newer version of the app
+
+When someone sends you updated files, close the app, then copy the new files into your existing app folder, replacing the old ones. **Keep your `dealcloud-memo-venv` folder**; don't delete it. Run `setup.bat` once more if `requirements.txt` changed (it's quick if nothing new is needed), then use `launch.bat` as usual.
+
+---
+
+# Reference: technical details
+
+The rest of this document is detailed reference material: exact matching rules, file layout, reports and safety notes. You don't need it to use the app day to day.
+
+## Upgrading from v3.3 (existing users only)
+
+1. Stop the active job in the app, then stop the server with Ctrl+C in the launcher window.
+2. Extract the v4 ZIP to a temporary folder. Copy **all files from its inner `DealCloud_Memo_Streamlit` folder** into the existing folder that contains `app.py` and `launch.bat`, replacing old source/launcher/documentation files. Do not create another nested app folder.
+3. **Keep your existing `dealcloud-memo-venv`, private credentials and old downloads.** Do not move or rename the virtual environment. No credentials or private client list is included in this package.
+4. Run **`setup.bat` once** to install the updated requirements, including `openpyxl` for Excel reading. This uses the existing environment if present. Organizational package permissions still apply.
+5. Run **`launch.bat`**. Open http://127.0.0.1:8501 if the browser does not open automatically. Select the input mode at the top.
+
+There is no environment activation step and no execution-policy change. If installing fresh, obtain an approved Python 3.10+ installation and Windows `py` launcher, then run setup and launch. Python 3.11/3.12 is a reasonable initial choice subject to package compatibility; dependencies are not a live-tested lockfile.
+
+### Files changed / added
+
+Changed runtime files: `app.py`, `worker.py`, `ui_support.py`, `downloader_engine.py`, `requirements.txt`, `launch.bat`.
+
+New runtime files: `excel_input.py`, `excel_ui.py`, `excel_executor.py`. New template: `DealCloud_Deal_List_Template.xlsx`. Documentation and test files are also updated/added. `setup.bat` still installs `requirements.txt` and remains the existing setup route.
+
+The original one-off workbook request list is **not embedded**. This app reads the file users upload. The one-off tool can remain separate and is not overwritten by these app files.
+
+## Output location changed to keep paths shorter
+
+Both modes now save new jobs beneath:
+
+```text
+%USERPROFILE%\DealCloud Memos\Downloads\<readable batch name>
+%USERPROFILE%\DealCloud Memos\Previews\<readable batch name>
 ```
 
-## Secondary memo compatibility fix (v3.2)
+For the example user, the base is `C:\Users\dsturdevant\DealCloud Memos`. This is not the app's nested extraction folder. Old app-local `Downloads`, `Previews` or `runs` folders are not moved/deleted. The app displays the exact new path and offers an Open folder button on Windows.
 
-`SecondaryMemo.TeamDiscussionMemo` is now treated as an additional optional stream. If the field is absent from the accessible schema or from both returned resolutions, the app continues processing the mapped `INTERNALMEMO` and `ClientMemo` fields, with an explicit coverage warning in the UI, log and `run_settings.json`. It does not claim that Team Discussion coverage is complete or move it to another object by guessing a mapping. Have your administrator verify schema and permissions if you need that stream.
+Excel mode uses short OS-user-temp cache paths and bounded readable destination names. All client/quarter labels are sanitized; no Excel cell is treated as an arbitrary filesystem path. Too-long destinations are reported rather than changing Windows system policies. Local missing-path/permission failures are not retried as transient attachment network failures. Interrupted jobs may leave confidential temporary/partial files; review and delete them under your retention policy.
 
-Canonical mapped fields remain required: their absence still produces an error. When TeamDiscussionMemo is available, its existing selection behavior and TeamDiscussionRecommendation mapping are retained. Counts may be lower when an optional stream cannot be read. The app does not infer that a missing column means there are no underlying attachments.
+## Credentials — both modes
 
-To apply only this runtime fix to v3/v3.1, replace **both `downloader_engine.py` and `app.py`**, then restart the app, refresh options and rerun preview. No dependency or credential change is required. The full ZIP also includes `test_secondary.py`; run it with the existing test suite for offline verification.
-
-## 1. First-time setup
-
-1. Extract the entire ZIP into a writable local folder. Do not run it from inside the ZIP. A short path is preferable because Windows path-length limits can affect downloads.
-2. Install Python through your organization's approved process, including the `py` Windows launcher. Python 3.10+ is needed; 3.11 or 3.12 is a reasonable initial choice, subject to current package compatibility.
-3. Double-click **`setup.bat`**. This creates **`dealcloud-memo-venv`** and installs `requirements.txt`. It needs access to your approved Python package repository.
-4. Double-click **`launch.bat`**. Your browser should open the local app at **http://127.0.0.1:8501**. If not, open that URL manually.
-
-No environment activation, PowerShell script execution, administrator rights, or execution-policy change is required by these launchers. Organizational software restrictions still apply.
-
-Keep the launcher window open while using the app. To stop the server, use Ctrl+C in that window. Stop an active download with the app's **Stop current job** button first; closing the browser or server is not a reliable way to stop the separate worker.
-
-### PowerShell equivalents
-
-From the extracted folder:
-
-```powershell
-py -m venv dealcloud-memo-venv
-.\dealcloud-memo-venv\Scripts\python.exe -m pip install -r requirements.txt
-.\dealcloud-memo-venv\Scripts\python.exe -m streamlit run app.py --server.address=127.0.0.1 --server.port=8501 --server.maxUploadSize=1 --server.fileWatcherType=none --browser.gatherUsageStats=false
-```
-
-Create the environment only once. Package installation need not be repeated unless dependencies change. The launcher automatically offers setup if the environment or imports are missing. Run `setup.bat` manually after dependency updates.
-
-## 2. Prepare your credentials file
-
-Copy `credentials.template.json` to a private location **outside the shared app folder**, rename it to something such as `my_dealcloud_credentials.json`, and replace the placeholders:
+Upload your existing local JSON with exactly these keys:
 
 ```json
 {
@@ -59,165 +172,161 @@ Copy `credentials.template.json` to a private location **outside the shared app 
 }
 ```
 
-The JSON must contain exactly these three keys, with nonempty string values. Use the tenant's HTTPS base URL, without a path, query, embedded login, or custom port. The app accepts a UTF-8 JSON file under 64 KiB. Standard JSON escaping applies if a secret contains a backslash or quote.
+Use the HTTPS tenant base URL with no path, query, embedded login or custom port. A valid-format upload does not prove authentication or file-read permission. The blank JSON template is also included.
 
-This script uses **client ID + client secret + site URL**, not a single API-key field. Ask your DealCloud administrator for an API client with the necessary schema, record, and file-read permissions.
+Credentials stay in the local app/worker processes and are passed to the worker through stdin, not file or command-line arguments. Only the child worker's environment is set for authentication; the Streamlit process environment is not changed. The uploaded file is not intentionally copied to run output. A completed JSON is nevertheless a **plaintext secret** on disk: restrict access, never upload it to this chat/GitHub/email, and follow organizational policy. “Clear credentials” removes the current UI upload, not the original disk file or forensic memory traces.
 
-**A JSON file is not encryption.** A completed file contains a reusable plaintext secret. Restrict its filesystem access; do not email it, place it in a shared folder, upload it to this chat, include it in a ZIP, or commit it to source control. Follow your organization's credential-storage policy. The included `.gitignore` is only a convenience, not a security control. Never disable security controls to make setup work.
+Literal client ID/secret redaction of worker stdout/stderr and known diagnostics is defensive best effort, not a guarantee against encoded SDK errors, other logs, crash dumps or interrupted cleanup. Inspect outputs before sharing. Binary memo contents are not modified by redaction.
 
-## 3. Use the app
+## Excel deal-list mode — recommended workflow
 
-1. **Upload your credentials JSON** in the Connection section. The app does not display the client ID or secret. File-format acceptance is not proof that authentication will work.
-2. Choose the site timezone and inclusive IC-date range. “End today” is resolved in that timezone when the job is submitted.
-3. Select one or more **Primaries, CoInvestments, Secondaries** populations.
-4. Choose **priority** (one successful memo per parent) or **all** eligible memo attachments.
-5. Select memo stages and audiences. Empty selections mean all supported stages or both audiences.
-6. Set the optional Primaries-only **Approved by IC?** filter and optional recommendation filter.
-7. Click **Load / Refresh filter options from DealCloud**. After it completes, use the searchable multi-select dropdowns for Structure/Structure Type, Asset Class, Strategy, SubStrategy, and Status where mapped. Empty = unrestricted. Multiple values within a field mean OR; filters across fields mean AND. Additional JSON filters are tucked into each population's **Advanced** section.
-8. Click **Preview eligible deals and counts**. Preview authenticates and reads schema, memo records, and linked parents. It does **not** request attachment metadata or download attachment files. Local preview CSVs and settings are still written.
-9. Review the preview, check the authorization box, and click **Download memos**. Changing settings or credentials requires a new successful preview. Partial or failed previews do not authorize downloading.
-10. Inspect counts, CSV logs, and any failures. Open the local output folder or optionally prepare a results ZIP.
-11. Click **Clear uploaded credentials** when finished, then stop the server. This does not erase your original JSON file from disk or promise forensic memory erasure.
+1. Choose **Excel deal list** at the top.
+2. Upload private credentials JSON and choose site timezone.
+3. Download the blank Excel template or upload an existing `.xlsx`.
+4. Choose worksheet/header row and map the columns. Review mapped rows and fix any validation errors; invalid rows block the job rather than disappearing silently.
+5. Choose default memo rule, audience preference and **save layout** (see below). With *Folder per client*, map the Client column, and optionally Year and Quarter for `Client/Year/Quarter` subfolders. Optional Memo Type cells override only their rows.
+6. Click **Preview Excel list**. This reads schema/records for the requested names and linked histories, but performs no attachment metadata or file-download calls.
+7. Review preview audit rows, matched IDs, intended stages, unmatched/ambiguous names, missing candidates and coverage warnings.
+8. Check the authorization box, then click **Download Excel-list memos**. A completed preview for the exact credentials, workbook/mapping and settings is required. Changing these inputs invalidates authorization. Population-level read/selection errors or zero eligible candidates block authorization. Coverage warnings or individual unmatched/ambiguous names can mark the result partial without blocking matched candidates: review those warnings before authorizing.
+9. Review the download CSV and counts. Candidate availability does not guarantee file access. “Processing completed” means the run finished, not that every request succeeded.
 
-### How the dropdown values are loaded
+**Initial safety cap:** 5 candidate attempts per population (not 5 per deal). Attempts include failures/skips; copies to multiple clients do not trigger extra API downloads for the same deal/policy. Uncheck the limit after a small verified test if you want the full list. The cap is not a byte quota or API-read limit, and preview counts all eligible candidates before the cap.
 
-- All three populations use searchable multi-select parent filters. The optional memo Recommendation filter remains a free-text list; memo stages, audiences and primary approval already have selection controls.
-- Values come from **actual accessible parent records linked to memos in the selected IC-date window**, using the supplied mappings and human-readable SDK values. The loader does not read every Fund/deal record, invent reference labels, or claim to enumerate every configured schema choice.
-- Options are loaded before applying parent, memo-stage, audience, recommendation or IC-approval filters. They are not cascading dropdowns: selecting a Strategy does not narrow SubStrategy options. A selectable label is not a guarantee that a memo will pass the later filters.
-- Loading authenticates and reads memo records and linked parents, so a broad date range may take time. It does not fetch attachment metadata, download memos, or write to DealCloud. Progress appears in the job log. Use Stop current job to cancel.
-- Changing credentials, selected populations, dates or timezone requires reloading options. Refreshing options invalidates the download authorization preview; run Preview again. Changing a parent filter does not reload options but does require a new preview before downloading.
-- Empty means no restriction. Defaults from the original script are retained. If a default or previously selected value is not observed in the current window, it remains explicitly selected with a warning rather than silently broadening the filter. Clear it if you do not want that restriction.
-- Missing/inaccessible fields are identified in the UI. They may remain unrestricted, but an active selection on an unavailable field blocks preview until cleared. A population read failure is reported as an error, not shown as an empty successful list.
-- Loaded labels are cached in the current browser session and are also saved in the options job's `Reports/result.json` under `Previews/Filter options - <batch name>`. These are tenant data: protect them and delete old options batches according to your retention policy. Credentials are not intentionally saved in these files.
+Preview and download make fresh reads; the preview is not a frozen transactional snapshot. Credentials and tenant data must still be authorized for each operation.
 
-### Initial defaults
+### Save layout: one folder vs. folder per client
 
-The interface starts with the supplied script's 2026-01-01 start date, today as end date, Primaries, priority mode, Final memos, Approved by IC = Yes, no recommendation restriction, and both audiences. Parent-filter defaults match the supplied script: unrestricted Primaries, CoInvestments AssetClass = Private Equity, Secondaries Structure = Secondary Transaction.
+| Layout | Result |
+|---|---|
+| **One folder (unique memos)** — default | Each unique deal/memo-policy is saved once, directly in the batch folder. Client/Quarter columns are not shown or used. |
+| **Folder per client** | One folder per Client value, each holding every memo requested for that client (optional `Quarter` subfolder). |
 
-**One deliberate safety change:** the UI initially caps attempts at **5 candidates per population**, whereas the supplied script default is unlimited. Turn off the cap only after reviewing a small live test. The cap counts attempts, including failures/skips; it is not a byte limit, storage quota, or API-read limit. Preview shows eligible candidates before this cap, not the exact number of files that will download.
+For *Folder per client*, put one row per client/deal pair — e.g. if five clients hold Fund A, list Fund A five times with each client name. Fund A is matched, selected and **downloaded once**, then copied into all five client folders; the audit CSV keeps one row per client request. Client names are grouped ignoring case and extra spaces (the folder uses the first spelling in the workbook); a numeric client code is treated as text; blank clients go to a `No Client` folder. Duplicate rows for the same client + deal + policy (+ quarter) share one copy rather than creating near-identical files. The attempt cap counts download attempts, not copies.
 
-### Selection behavior retained from v11
+### Excel format and column mapping
 
-- Inclusive **IC dates**, not deal creation or Team Discussion dates. Undated and out-of-window events are excluded locally even if server filtering returns extra rows.
-- Explicit populations: Fund/DiligenceActivity, CoInvestmentDeal/CIMemo, and SecondaryDeal/SecondaryMemo. These mappings came from the supplied code; your live tenant must match.
-- Parent filters use the linked parent fields. Unrestricted Primaries includes all linked Fund structures, not a verified Primary Partnership-only subset. Secondaries uses the active `Strategy_1` mapping. No invented Fund Status alias is added.
-- Primaries “Approved by IC?” is separate from Recommendation. Explicit No does not include blank/unknown. The flag does not apply to the other populations.
-- Recommendation uses `Recommendation` for all populations; Secondary TeamDiscussionMemo uses `TeamDiscussionRecommendation`. The UI does not offer arbitrary recommendation-field remapping; the supplied mapping remains in the engine.
-- Priority order: Internal Final, Client Final, Internal Screening, Client Screening, Internal Follow-On, Client Follow-On, Internal Update/Addendum, Client Update/Addendum; newest IC date within a tier. Failed candidates can fall back, with bounded retries for qualifying transient attachment errors.
-- All mode does not stop after the first successful file. Attachment IDs repeated for the same parent are deduplicated; different IDs are not content-deduplicated.
-- Known supplementary/impact-assessment materials are excluded by stage or filename, not by inspecting contents. Update includes Addendum. Unknown stages are excluded.
-- Filename metadata is optional by default. If no filename is available from metadata or the memo field, a `.bin` may be saved with a review note. Strict filename mode skips these files instead.
-- Memo queries request the IC window and linked parents are fetched in ID batches. Active missing filter fields fail rather than silently being ignored. Actual tenant/SDK behavior still needs verification.
+Only **Deal Name** is required. A name-only list uses the default population selected in the app. For mixed types, include Population/Structure.
 
-### Preview is not a frozen snapshot
+| Column | Required? | Behavior |
+|---|---|---|
+| Deal Name | Yes | Exact DealCloud deal/fund name. No fuzzy matching or guessed aliases. |
+| Population / Structure | Optional | Primaries, CoInvestments, Secondaries; supported aliases include Primary Partnership, Direct Transaction, Secondary Transaction. Blank/unmapped uses app default. |
+| Client Name | Required for *Folder per client*; ignored otherwise | Local folder name only. Blank → `No Client` folder. Does not affect tenant matching or permissions. |
+| Year | Optional, *Folder per client* only | e.g. `2026`, `FY2026`. Adds a year subfolder and fills in the year for quarters typed without one. |
+| Quarter(s) | Optional, *Folder per client* only | Q1–Q4 in common formats, e.g. `Q3 2026`, `2026 Q3`, `3Q26`; several separated by semicolons. Adds a quarter subfolder, never an IC-date filter. |
+| Memo Type | Optional | Specific stage, Priority fallback, or Latest available. Blank = app default. |
 
-Downloading re-reads the API. Tenant data or permissions may change after preview. Metadata and filename checks happen during downloading and can remove candidates that were counted in preview. Zero successful files can result from failures or skips, not necessarily zero eligible records. A run marked completed means the processing finished without a population-level error, not that every candidate downloaded successfully.
+Unrelated columns—including source workbook Deal Entry IDs, amounts, status and compliance columns—are ignored unless mapped. **Workbook IDs are never assumed to be DealCloud IDs.** Use the worksheet dropdown to avoid exception/exclusion sheets. Automatic suggestions help but must be reviewed; users can map differently named headers manually.
 
-## 4. Outputs — simplified in this version
+Limits: `.xlsx` only; at most 10 MiB compressed, 80 MiB declared expanded ZIP contents, 3,000 data rows and 100 columns per selected list sheet. Header row may be 1–50. No passwords, macros, duplicate headers or formulas in mapped cells. Paste values first. Large formatted empty ranges may exceed limits; copy the list into a clean sheet. This is bounded parsing, not a security guarantee for arbitrary untrusted spreadsheets.
 
-Download batches now use a short, readable name based on population, selected memo stages and timestamp in the site timezone. Full filters remain in `Reports/run_settings.json` rather than making the pathname enormous.
+The raw workbook is not intentionally written to disk. Mapped deal/client/quarter requests and source row numbers **are saved in run reports**, so treat those as confidential. The template contains fictional placeholder data only; replace/delete its sample row before use.
 
-For a single population:
+### Memo selection — an explicit choice, not a guessed default
 
-```text
-Downloads/
-└── Primaries - Final - 2026-11-03 17.00.00/
-    ├── Fund Name - 2026-09-15 - Final - Internal.pdf
-    ├── Another Fund - 2026-10-20 - Final - Client.pdf
-    └── Reports/
-        ├── download_summary.csv
-        ├── downloaded_files.csv
-        ├── candidate_attempts.csv
-        ├── event_issues.csv
-        ├── run_settings.json
-        ├── worker.log
-        └── result.json
-```
+Default Excel rule: **Priority fallback**. Users may choose another rule, or set Memo Type per row.
 
-No `runs/random-id/output/second-timestamp/Primaries/Memos` chain. Only when multiple populations are selected are memo files separated into `Primaries`, `CoInvestments` and/or `Secondaries` folders directly under the batch. In that case, per-population CSVs go under `Reports/<population>` and the run settings/log/status remain directly under `Reports`.
+| Rule | What is eligible / what wins |
+|---|---|
+| Final | Final only; no Screening/Follow-On/Update fallback. |
+| Screening | Screening only. |
+| Follow-On | Follow-On only. |
+| Update | Update/Addendum only. Addendum is an alias for the combined group. |
+| Priority fallback | Final → Screening → Follow-On → Update; within each stage Internal then Client, newest IC date within each audience. |
+| Latest available | Newest IC date across all four supported stages. With both audiences enabled, Internal wins only as a same-date tie-break, not over a newer Client memo. |
 
-- `Downloads` lives beside `app.py`, not necessarily in the Windows Downloads known folder. The app shows the full path and has an **Open local output folder** button.
-- Preview batches are stored separately under `Previews`, with the same readable naming convention and no memo downloads.
-- Duplicate batch names get `(2)`, `(3)`, etc.; earlier runs are never overwritten.
-- Individual memo filenames and selection rules are unchanged.
-- Packaging a results ZIP puts it inside `Reports`. Its browser download name matches the readable batch name. The archive includes downloaded files recorded in the CSV logs and known report files, not credentials, worker logs, or internal worker status.
-- Browser ZIP preparation is limited to 150 MiB of source files; this does not limit local downloads.
-- The summary table displays the first 2,000 rows; local CSVs contain all rows.
-- CSV paths refer to the producing computer and are not rewritten when the ZIP is moved. `event_issues.csv` is not an exhaustive exclusion log.
-- No automatic deletion is performed. Review or delete incomplete batches after stopping a job, and apply your organization's retention rules.
+Audience choices: **Internal then Client**, **Internal only**, **Client only**. In a specific stage, the first means newest Internal first, then older Internal candidates, then Client fallback. Priority fallback respects stage before audience. Latest available respects date before audience.
 
-### Updating an existing installation
+All Excel rules stop after one successfully downloaded memo per unique population/parent/effective-policy combination. Failures/skips can fall through to older eligible candidates. Different policies for the same deal intentionally can produce multiple files. Repeated requests for the same deal/policy reuse the selected source memo and copy it to the requested destinations.
 
-Stop the current job and server first. Extract this ZIP to a temporary folder, then copy its source, launcher and documentation files into the existing app folder, replacing the old files. Leave your existing `dealcloud-memo-venv`, private credentials, and old downloads untouched. Restart `launch.bat`. This version does not move or rename old run folders; the new layout applies to future jobs only.
+Unknown stages, undated events and known supplementary/impact-assessment materials remain excluded. Filename exclusions are not content inspection. Strict filename verification is **on by default in Excel mode**. Source extensions are preserved; files are not converted to PDF. Filenames and CSV audit show the **actual selected stage**—a Screening memo is never labeled Final.
 
-The duplicated app-folder name in an existing path comes from ZIP extraction, not the worker. If desired, use a single app folder at a short path when setting up a new installation. Do not move or rename an existing virtual environment; recreate it using setup if you relocate the app.
+**Unlike the recent one-off script, Excel Priority fallback includes Update/Addendum as the fourth stage.** If you only want one stage, choose it explicitly. There is no independent custom fallback-order editor in this version.
 
-## 5. Credential handling and deployment limits
+No Excel memo-date window, IC-approved flag, recommendation, current status, asset-class or other filter-based settings are applied. Quarter columns describe folder placement, not memo eligibility or a historical as-of cutoff. A Q1 folder can contain a memo issued after Q1.
 
-- The uploaded JSON is processed in the local Streamlit process's memory; the app does not intentionally copy it into an output file or persist it as a settings file.
-- Credentials pass to a separate worker over stdin, not command-line arguments or a credential file. Only the worker receives credential environment variables. The Streamlit process's environment is not modified for authentication.
-- Workers use a separate process and uniquely named run folder for each job; engine settings are not changed globally across jobs in the UI process.
-- Literal client ID and client secret values are redacted from worker console output, result status, and known diagnostic text files on normal completion. This is defensive, best-effort masking—not a guarantee against every SDK encoding, log sink, crash dump, or malicious response. Inspect logs before sharing them. Binary memo contents are not altered.
-- Secrets necessarily exist in process memory and the worker's environment while it runs. Local administrators, other processes with sufficient privileges, OS diagnostics, or malicious software can potentially access them.
-- The launcher binds to **127.0.0.1 only** and disables Streamlit usage telemetry. Loopback binding is not authentication and does not isolate users who share the same computer. Other local applications/users may still access the port. Do not use it on an untrusted or shared computer.
-- No custom TLS, user login, per-user authorization, approved central secret manager, or production retention controls are included. **Do not deploy this package to a shared server or expose it to a LAN/internet as-is.**
-- Each browser session can run one worker at a time; the package does not impose a machine-wide concurrency limit. Use one local session at a time to avoid unnecessary API load.
+### Year and quarter folders
 
-For a future shared internal app, use organizational authentication and a reviewed credential/authorization design instead of casually uploading long-lived secrets to a remote server.
+With *Folder per client*, optional **Year** and **Quarter** columns add subfolders: `Client/2026/Q3/`. A Year with no Quarter saves to `Client/2026/`; a Quarter with no year saves to `Client/Q3/`.
 
-## 6. Troubleshooting
+Quarter cells accept Q1–Q4 in common formats, all saved as the same folder: `Q3 2026`, `2026 Q3`, `Q3-26`, `Q3'26`, `3Q26`, `Q3 FY26`, `Quarter 3 2026`, or just `Q3` / `3` when a Year column supplies the year. Separate several with semicolons (`Q1; Q3`). Year cells accept `2026`, `FY2026` or `FY26`. A quarter whose year disagrees with the Year column is flagged as an invalid row.
 
-### Python launcher missing
+If one client lists the same deal (same memo rule) in more than one quarter of the same year, choose:
 
-Install Python and the `py` launcher through IT. If `python` works, you can create the environment manually with `python -m venv dealcloud-memo-venv`, then run `setup.bat`.
+- **Save a copy in every quarter listed** (default).
+- **Only the earliest quarter**, e.g. Q1 over Q2/Q3/Q4.
+- **Only the latest quarter**, e.g. Q4 over Q1/Q2/Q3.
 
-### Package installation fails
+Skipped quarters appear in the audit as `SUPPRESSED` rows and do not make the run partial. Different years, different clients and different memo rules are always kept independently. The memo itself is still downloaded only once.
 
-Keep the full error, check approved repository/proxy/certificate settings, and confirm Python/package compatibility. Do not disable TLS verification. The dependency ranges are not a tested lockfile. After a successful live pilot, pin the versions your organization validates.
+Folders describe where you want the memo filed, not when it was written. Year/Quarter never filter memos by IC date, so a `2026/Q1` folder can contain a memo dated later.
 
-### Activation scripts blocked
+### Exact matching and safety
 
-No activation is used. Do not run `Activate.ps1` or change execution policy. Use the launchers or the explicit environment executable shown above.
+Names are queried in the mapped population and must resolve to a unique accessible parent ID. Local comparison ignores case/repeated whitespace but preserves punctuation, legal suffixes and fund numerals. Server name comparisons may still cause a nonmatch before local normalization; review the audit, do not assume a near-match is intended.
 
-### Port 8501 is in use
+Populations use the supplied mapping: Fund/DiligenceActivity, CoInvestmentDeal/CIMemo, SecondaryDeal/SecondaryMemo. These are tenant-specific mappings to validate. Name queries and parent-reference memo reads are scoped; unrelated returned names/IDs cause an error rather than silently broadening to full objects. No unfiltered fallback is issued. Missing/unreturned memo streams produce coverage warnings: counts describe accessible mapped streams, not proof of complete tenant history. Required matching/linkage fields still fail clearly.
 
-Close the other local app. Alternatively, change `--server.port=8501` to another free port in `launch.bat`, then use the matching localhost URL.
+No create/update/delete API operations are part of Excel execution. Client grouping is not an entitlement check. An Internal memo in a client-named folder is **not** automatically approved for distribution to that client.
 
-### JSON upload rejected
+## Existing filter-based search
 
-Use the exact three keys, valid JSON, UTF-8 encoding, an HTTPS tenant base URL, and actual values instead of template placeholders. Do not add comments to JSON. The file remains a plaintext secret even when the UI masks it.
+Select **Filter-based search** at the top to keep the existing workflow:
 
-### Authentication, schema, or file access fails
+1. Upload credentials and choose timezone, inclusive IC dates and populations.
+2. Choose priority (one successful memo per parent) or all eligible files, stages and audiences.
+3. Set Primaries-only Approved by IC? (blank/unknown is not No) and optional Recommendation values.
+4. Load/refresh available parent-filter dropdown values, choose Structure/Asset Class/Strategy/SubStrategy/Status filters where mapped, then preview.
+5. Review the preview and authorize download.
 
-Confirm the tenant URL, client credentials, read permissions, and the supplied population mappings with your administrator. Do not include secrets in screenshots or support messages. Preview does not test attachment-download permissions; validate those with a small live download.
+Dropdown labels come from accessible parents linked to memos in the chosen IC window, **not every configured tenant choice**. They are not cascading filters. Empty = unrestricted; OR within each field, AND across fields. Active missing fields fail rather than being silently ignored. Existing defaults are retained: Primaries Final/Approved by IC = Yes; CoInvestments AssetClass = Private Equity; Secondaries Structure = Secondary Transaction. A selected default unobserved in the window remains active with a warning until cleared.
 
-### Download button disabled
+The attempt cap defaults to 5 **per population in both modes**. Old filter-mode selection logic is retained, including Internal Final → Client Final → Internal Screening → Client Screening → Internal Follow-On → Client Follow-On → Internal Update/Addendum → Client Update/Addendum. All mode does not stop at one successful file. Approval filtering applies only to Primaries. Unknown filename handling remains the filter mode's own checkbox/default, not Excel's.
 
-Upload valid credentials, select a population and valid date range/timezone, load filter options successfully for all selected populations, complete a fully successful preview for the current settings, and check the authorization checkbox. An active worker also disables new launches. Changed settings/credentials require another preview.
+The v3.3 semicolon-separated attachment-ID fix remains in the shared engine. Optional Secondary TeamDiscussionMemo absence is warned and excluded instead of blocking canonical fields; it is not silently declared covered. Canonical mapped fields remain required in filter-mode execution. Server IC-window queries are checked locally and linked parents fetched in batches.
 
-### No files downloaded, or only some populations completed
+## Output and audit
 
-Review `population_results`, `population_error.txt`, `download_summary.csv`, and `candidate_attempts.csv`. Check IC dates, filters, approval/recommendation values, filename rules, and the attempt cap. Partial preview success does not enable downloading. Reduce to one population and a narrow date window for diagnosis.
+Excel batches contain selected files plus a `Reports` folder: directly in the batch folder for *One folder*, or under `<Client>/[<Year>/][<Quarter>/]` for *Folder per client* (batch named “By client - …”). Client folder names get up to about 48 characters with your normal Windows profile path (more without Year/Quarter folders). Longer names are shortened in the middle on whole words, so the family name and the distinguishing ending both survive: `Hamilton Lane Strategic Opportunities Fund VIII (Offshore) LP` → `Hamilton Lane~Fund VIII (Offshore) LP`. Files are named `<Deal> - <IC date> - <Stage> - <Audience>.pdf`, with no random code.
 
-### Browser closed during a run
+Excel reports:
 
-A worker can continue after the browser disconnects. Reconnecting may not restore its session controls. Check local run folders and use Windows Task Manager if necessary to stop an orphaned Python worker, identifying the relevant process carefully. Abrupt stopping can leave partial outputs.
+- `excel_results.csv`: row-level matching, policy, candidate count, actual/intended stage/date/audience, status, file path, client/quarter and original source row.
+- `downloaded_files.csv`: successful local destinations used to construct the optional result ZIP.
+- `candidate_attempts.csv`: actual attempted event/attachment details and results.
+- `run_settings.json`: mapped requests/settings and audit summary, no intentionally persisted credentials.
+- `excel_issues.json`: source/data-quality notes where available; not an exhaustive exclusion log.
+- `worker.log`, `result.json`: internal diagnostics/status, not included in the results ZIP.
 
-## 7. Tests and source files
+Filter batches retain `download_summary.csv`, `downloaded_files.csv`, `candidate_attempts.csv`, `event_issues.csv`, `run_settings.json`, optional `population_error.txt`, and worker diagnostics. Multiple populations may have separate report folders.
 
-- `original_downloader_v11.py`: original pasted script retained unchanged as a reference. Do not run this file to launch the UI.
-- `downloader_engine.py`: supplied engine with a preview-only branch, manifest indicator and simplified output layout. Download-selection, retries, and naming behavior are reused.
-- `worker.py`: isolated execution, stdin credential transfer, defensive redaction, result status.
-- `ui_support.py`: input validation and safe result packaging.
-- `filter_options.py`: actual observed parent-filter labels for all three populations, scoped to the chosen IC-date window; missing-field and per-population error reporting.
-- `app.py`: Streamlit controls and worker monitoring.
-- `test_app.py`: offline unittest suite using a fake SDK. No tenant credentials are required.
-- `TEST_RESULTS.md`: records the checks performed for this package.
+Browser result ZIP creation is optional and limited to **150 MiB of source files**, not a download quota. Known reports plus files referenced in download logs are included, not credentials, original uploads, arbitrary dropped-in files or internal worker logs/status. Larger outputs remain available locally. Excel CSV File paths are relative to the batch root and remain usable after extracting its ZIP. Filter-mode CSV paths retain their original local absolute paths. Browser tables show at most 2,000 audit rows; full CSVs are saved locally.
 
-Run offline tests after installation:
+## Local-only security, cancellation and retention
+
+The launcher binds to **127.0.0.1** and disables Streamlit usage telemetry. Loopback is not authentication and does not isolate users/apps on a shared computer. Do not expose this app to LAN/internet or host it remotely as-is. No organizational login, TLS, central secret manager, per-user authorization or reviewed server retention is implemented. An approved shared deployment needs separate design/security review.
+
+One job at a time is allowed per browser session and mode switching is disabled while it runs. There is no machine-wide concurrency cap. Use one session at a time. Changing settings during a job does not change its submitted payload. Use the Stop button before stopping the server. Closing the browser can orphan a worker and reconnection may not restore controls; carefully identify the relevant Python process in Task Manager if necessary. Interrupted jobs leave incomplete files/logs and possibly OS-temp caches. Review/delete under approved retention rules; prior batches are not deleted.
+
+Do not publicly publish uploaded client lists, credentials, downloaded memos or diagnostics containing tenant data. The distributed package/template has no actual client list or credentials. Tests use invented labels and simulated file bytes only.
+
+## Troubleshooting (technical)
+
+- **No new Excel mode / upload still limited to 1 MiB:** confirm all v4 files replaced the files beside the launcher you actually run; stop/restart the server using the new `launch.bat` (10 MiB uploader setting). Do not launch an older nested copy.
+- **openpyxl missing:** rerun `setup.bat`, or `.\dealcloud-memo-venv\Scripts\python.exe -m pip install -r requirements.txt` in that app folder.
+- **Download disabled:** fix invalid mapped rows/credentials, run a completed preview for current input/settings and check authorization. Partial population-level preview errors block download. The 5-attempt cap can intentionally leave candidates unattempted.
+- **No match / ambiguous:** verify exact tenant name and mapped population. IDs in the workbook are not used as shortcuts. Audit unmatched rows instead of broad/fuzzy matching.
+- **No candidates:** check requested stage, missing/undated histories, audience and accessible schema/files. This does not prove a memo does not exist. A Follow-On in the deal name does not make an event's Stage Follow-On.
+- **HTTP 404 vs FileNotFoundError:** HTTP file-not-found can mean unavailable attachment/route/permissions; local FileNotFoundError can be a save-path problem. Review the actual diagnostic. Excel mode uses short cache paths; an unusually long profile/output destination can still fail with a clear path warning.
+- **Port 8501 in use:** close the other local app or change the launcher's port and browser URL consistently.
+- **Package install/proxy/certificate errors:** retain the full error, use approved repositories/network settings, and check version compatibility. Never disable certificate verification as a workaround.
+
+## Tests
+
+Run all distributed tests from the app folder:
 
 ```powershell
-.\dealcloud-memo-venv\Scripts\python.exe -m unittest -v test_app.py test_ui_smoke.py
+.\dealcloud-memo-venv\Scripts\python.exe -m unittest discover -v -p "test_*.py"
 ```
 
-Simulated tests cannot validate your tenant's schema, actual SDK/network behavior, file permissions, Windows launcher behavior, or browser interactions. Begin live validation with one population, a narrow IC window, strict filename checks if required, and the 5-attempt cap enabled.
+No live developer connection/download is performed by this command. Offline parser/SDK simulation/stub-UI checks do not establish live tenant schema, actual SDK network/file behavior, Windows .bat execution or real Streamlit browser correctness. Start with a small known list and the default 5-attempt cap, compare a sample of downloaded files to the tenant, then disable the cap for a full verified run. See `TEST_RESULTS.md` for the checks actually completed.
